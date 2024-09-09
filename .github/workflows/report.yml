@@ -2,7 +2,7 @@ name: Send Weekly Report on Slack
 
 on:
   schedule:
-    - cron: '20 19 * * 5'
+    - cron: '20 19 * * *'
 
 jobs:
   send-weekly-report-on-slack:
