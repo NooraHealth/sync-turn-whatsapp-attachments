@@ -1,0 +1,33 @@
+name: Sync Data to BigQuery
+
+on:
+  schedule:
+    - cron: '20 19 * * *'
+
+jobs:
+    sync-data-to-bq:
+        runs-on: ubuntu-latest
+        env:
+            USERNAME: ${{ secrets.USERNAME }}
+            PASSWORD: ${{ secrets.PASSWORD }}
+            API_URL: ${{ vars.API_URL }}
+            SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}
+            SLACK_RECEIVER_ID: ${{ vars.SLACK_RECEIVER_ID }}
+            BIGQUERY_DATASET_NAME: ${{ vars.BIGQUERY_DATASET_NAME }}
+        steps:
+        - name: Checkout code
+          uses: actions/checkout@v4
+
+        - name: Set up Python
+          uses: actions/setup-python@v5
+          with:
+            python-version: '3.12'
+            cache: 'pip'
+
+        - name: Install dependencies
+          run: |
+            python -m pip install --upgrade pip
+            pip install -r requirements.txt
+
+        - name: Run script
+          run: python api-export.py --mode bq
