@@ -1,11 +1,11 @@
-name: Fetch Today's Data
+name: Send Weekly Report on Slack
 
 on:
   schedule:
-    - cron: '20 19 * * *'
+    - cron: '20 19 * * 5'
 
 jobs:
-  fetch-daily-data:
+  send-weekly-report-on-slack:
     runs-on: ubuntu-latest
     permissions:
         contents: write
@@ -32,14 +32,4 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run script
-        run: python api-export.py
-
-      - name: Get current date
-        id: date
-        run: echo "release_name=$(date +'%d-%m-%Y')" >> "$GITHUB_OUTPUT"
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: data.xlsx
-          tag_name: ${{ steps.date.outputs.release_name }}
+        run: python api-export.py --mode report
