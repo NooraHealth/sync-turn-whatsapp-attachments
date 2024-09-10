@@ -388,6 +388,8 @@ if __name__ == "__main__":
         if not pd.isnull(max_patient_session_date):
             dates["start_date"] = max_patient_session_date
 
+        dates["end_date"] = datetime.now().date()
+
         print(
             f"Automatically picked start_date as {dates['start_date']} based on existing data"
         )
