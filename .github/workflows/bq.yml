@@ -1,6 +1,8 @@
 name: Sync Data to BigQuery
 
 on:
+  push:
+    branches: [ main ]
   schedule:
     - cron: '20 19 * * *'
 
@@ -14,6 +16,7 @@ jobs:
             SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}
             SLACK_RECEIVER_ID: ${{ vars.SLACK_RECEIVER_ID }}
             BIGQUERY_DATASET_NAME: ${{ vars.BIGQUERY_DATASET_NAME }}
+            BIGQUERY_SERVICE_ACCOUNT_KEY: ${{ secrets.BIGQUERY_SERVICE_ACCOUNT_KEY }}
         steps:
         - name: Checkout code
           uses: actions/checkout@v4
