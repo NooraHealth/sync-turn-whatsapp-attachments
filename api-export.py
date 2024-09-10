@@ -138,6 +138,9 @@ def init_envs():
     slack_token = os.environ.get("SLACK_TOKEN")
     slack_user_id = os.environ.get("SLACK_RECEIVER_ID")
     bigquery_dataset = os.environ.get("BIGQUERY_DATASET_NAME")
+    bigquery_service_account = json.loads(
+        os.environ.get("BIGQUERY_SERVICE_ACCOUNT_KEY")
+    )
 
     if username == None:
         raise Exception(
@@ -159,6 +162,11 @@ def init_envs():
             "Unable to sync data to bigquery. Did you set correct BIGQUERY_DATASET_NAME in respository variables?"
         )
 
+    if bigquery_service_account == None:
+        print(
+            "Unable to sync data to bigquery. Did you set correct BIGQUERY_SERVICE_ACCOUNT_KEY in respository secrets?"
+        )
+
     if slack_token == None:
         print(
             "Unable to send message through slack. Did you set SLACK_TOKEN in repository secrets?"
@@ -176,6 +184,7 @@ def init_envs():
         "slack_token": slack_token,
         "slack_user_id": slack_user_id,
         "bigquery_dataset": bigquery_dataset,
+        "bigquery_key": bigquery_service_account,
     }
 
 
@@ -228,9 +237,10 @@ def execute(start_date: datetime, end_date: datetime, envs: dict, sync_bigquery:
 
     all_phones = list(set(phones_in_attendance + phones_in_training))
 
-
     if sync_bigquery == True:
-        credentials = service_account.Credentials.from_service_account_file("sc.json")
+        credentials = service_account.Credentials.from_service_account_info(
+            envs["bigquery_key"]
+        )
 
         existing_nurses = pandas_gbq.read_gbq(
             f"SELECT * FROM `{envs['bigquery_dataset']}.nurses_v1`",
