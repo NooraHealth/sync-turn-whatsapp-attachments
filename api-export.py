@@ -228,9 +228,10 @@ def execute(start_date: datetime, end_date: datetime, envs: dict, sync_bigquery:
 
     all_phones = list(set(phones_in_attendance + phones_in_training))
 
-    credentials = service_account.Credentials.from_service_account_file("sc.json")
 
     if sync_bigquery == True:
+        credentials = service_account.Credentials.from_service_account_file("sc.json")
+
         existing_nurses = pandas_gbq.read_gbq(
             f"SELECT * FROM `{envs['bigquery_dataset']}.nurses_v1`",
             project_id="noorahealth-raw",
