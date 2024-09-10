@@ -362,7 +362,9 @@ if __name__ == "__main__":
     envs = init_envs()
 
     if args.mode == "bq":
-        credentials = service_account.Credentials.from_service_account_file("sc.json")
+        credentials = service_account.Credentials.from_service_account_info(
+            envs["bigquery_key"]
+        )
 
         patient_training_df = pandas_gbq.read_gbq(
             f"SELECT MAX(date_of_session) AS max_session_date FROM `{envs['bigquery_dataset']}.patient_training_v1`",
