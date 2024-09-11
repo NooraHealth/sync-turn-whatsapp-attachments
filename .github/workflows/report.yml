@@ -15,6 +15,7 @@ jobs:
         API_URL: ${{ vars.API_URL }}
         SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}
         SLACK_RECEIVER_ID: ${{ vars.SLACK_RECEIVER_ID }}
+        BIGQUERY_SERVICE_ACCOUNT_KEY: ${{ secrets.BIGQUERY_SERVICE_ACCOUNT_KEY }}
 
     steps:
       - name: Checkout code
