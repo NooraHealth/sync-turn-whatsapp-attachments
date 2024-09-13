@@ -2,13 +2,14 @@ import argparse
 import datetime as dt
 import hashlib
 import json
-import os
+import sys
 from datetime import datetime, timedelta
 from multiprocessing import Pool
 
 import pandas as pd
 import pandas_gbq
 import requests
+from decouple import config
 from google.oauth2 import service_account
 from slack_sdk import WebClient
 
@@ -131,25 +132,32 @@ class Report:
             return data["data"] if data["result"] == "success" else []
 
 
-def init_envs():
-    username = os.environ.get("USERNAME")
-    password = os.environ.get("PASSWORD")
-    api_url = os.environ.get("API_URL")
-    slack_token = os.environ.get("SLACK_TOKEN")
-    slack_user_id = os.environ.get("SLACK_RECEIVER_ID")
-    bigquery_dataset = os.environ.get("BIGQUERY_DATASET_NAME")
-    bigquery_service_account = json.loads(
-        os.environ.get("BIGQUERY_SERVICE_ACCOUNT_KEY")
-    )
+def process_json(value):
+    if value != None:
+        value = value.replace("'", '"')
+        return json.loads(value)
+    return value
 
-    if username == None:
+
+def init_envs():
+    api_username = config("API_USERNAME")
+    api_password = config("API_PASSWORD")
+    api_url = config("API_URL")
+    slack_token = config("SLACK_TOKEN", default=None)
+    slack_user_id = config("SLACK_RECEIVER_ID", default=None)
+    bq_dataset = config("BQ_DATASET_NAME")
+    bq_key = config("BQ_KEY", cast=process_json, default=None)
+    bq_key_file_path = config("BQ_KEY_FILE_PATH", default=None)
+    bq_key_value = None
+
+    if api_username == None:
         raise Exception(
-            "Unable to fetch data. Did you set correct API username in respository secrets?"
+            "Unable to fetch data. Did you set correct API_USERNAME in respository secrets?"
         )
 
-    if password == None:
+    if api_password == None:
         raise Exception(
-            "Unable to fetch data. Did you set correct API password in respository secrets?"
+            "Unable to fetch data. Did you set correct API_PASSWORD in respository secrets?"
         )
 
     if api_url == None:
@@ -157,15 +165,22 @@ def init_envs():
             "Unable to fetch data. Did you set correct API_URL in respository variables?"
         )
 
-    if bigquery_dataset == None:
+    if bq_dataset == None:
         print(
-            "Unable to sync data to bigquery. Did you set correct BIGQUERY_DATASET_NAME in respository variables?"
+            "Unable to sync data to bigquery. Did you set correct BQ_DATASET_NAME in respository variables?"
         )
 
-    if bigquery_service_account == None:
+    if bq_key == None and bq_key_file_path == None:
         print(
-            "Unable to sync data to bigquery. Did you set correct BIGQUERY_SERVICE_ACCOUNT_KEY in respository secrets?"
+            "Unable to sync data to bigquery. Did you set correct BQ_KEY or BQ_KEY_FILE_PATH in respository secrets?"
         )
+    else:
+        if bq_key != None:
+            bq_key_value = service_account.Credentials.from_service_account_info(bq_key)
+        if bq_key_file_path != None:
+            bq_key_value = service_account.Credentials.from_service_account_file(
+                bq_key_file_path
+            )
 
     if slack_token == None:
         print(
@@ -178,13 +193,13 @@ def init_envs():
         )
 
     return {
-        "username": username,
-        "password": password,
+        "username": api_username,
+        "password": api_password,
         "api_url": api_url,
         "slack_token": slack_token,
         "slack_user_id": slack_user_id,
-        "bigquery_dataset": bigquery_dataset,
-        "bigquery_key": bigquery_service_account,
+        "bigquery_dataset": bq_dataset,
+        "bigquery_key": bq_key_value,
     }
 
 
@@ -238,14 +253,10 @@ def execute(start_date: datetime, end_date: datetime, envs: dict, sync_bigquery:
     all_phones = list(set(phones_in_attendance + phones_in_training))
 
     if sync_bigquery == True:
-        credentials = service_account.Credentials.from_service_account_info(
-            envs["bigquery_key"]
-        )
-
         existing_nurses = pandas_gbq.read_gbq(
             f"SELECT * FROM `{envs['bigquery_dataset']}.nurses_v1`",
             project_id="noorahealth-raw",
-            credentials=credentials,
+            credentials=envs["bigquery_key"],
         )
 
         filtered_phones = []
@@ -263,6 +274,7 @@ def execute(start_date: datetime, end_date: datetime, envs: dict, sync_bigquery:
     nurses = [n for ns in nss for n in ns]
 
     nurses_df = pd.DataFrame(nurses)
+
     nurses_df["user_created_dateandtime"] = pd.to_datetime(
         nurses_df["user_created_dateandtime"], format="%Y-%m-%d %H:%M:%S"
     )
@@ -287,12 +299,15 @@ def execute(start_date: datetime, end_date: datetime, envs: dict, sync_bigquery:
     training_df["totalmaster_trainer"] = training_df["totalmaster_trainer"].astype(int)
     training_df["total_trainees"] = training_df["total_trainees"].astype(int)
 
+    attendance_df.sort_values("date_of_session", inplace=True)
+    nurses_df.sort_values("user_created_dateandtime", inplace=True)
+
     if sync_bigquery == True:
         pandas_gbq.to_gbq(
             nurses_df,
             f"{envs['bigquery_dataset']}.nurses_v1",
             project_id="noorahealth-raw",
-            credentials=credentials,
+            credentials=envs["bigquery_key"],
             if_exists="append",
             table_schema=[
                 {"type": "STRING", "name": "username", "mode": "REQUIRED"},
@@ -308,7 +323,7 @@ def execute(start_date: datetime, end_date: datetime, envs: dict, sync_bigquery:
             attendance_df,
             f"{envs['bigquery_dataset']}.patient_training_v1",
             project_id="noorahealth-raw",
-            credentials=credentials,
+            credentials=envs["bigquery_key"],
             if_exists="append",
             table_schema=[
                 {"type": "DATE", "name": "date_of_session", "mode": "NULLABLE"},
@@ -322,7 +337,7 @@ def execute(start_date: datetime, end_date: datetime, envs: dict, sync_bigquery:
             training_df,
             f"{envs['bigquery_dataset']}.nurse_training_v1",
             project_id="noorahealth-raw",
-            credentials=credentials,
+            credentials=envs["bigquery_key"],
             if_exists="append",
             table_schema=[
                 {"type": "INT64", "name": "total_trainees", "mode": "NULLABLE"},
@@ -334,42 +349,45 @@ def execute(start_date: datetime, end_date: datetime, envs: dict, sync_bigquery:
         )
     else:
         with pd.ExcelWriter("data.xlsx", engine="xlsxwriter") as writer:
-            pd.DataFrame(training_df).to_excel(
+            pd.DataFrame(attendance_df).to_excel(
                 writer, sheet_name="attendance", index=False
             )
             pd.DataFrame(nurses_df).to_excel(writer, sheet_name="nurses", index=False)
 
 
 if __name__ == "__main__":
+    envs = init_envs()
     parser = argparse.ArgumentParser(description="Process different modes")
 
     parser.add_argument(
         "--mode",
         choices=["bq", "report"],
-        required=True,
         help="Specify the operation mode (bq or report)",
     )
+    parser.add_argument(
+        "--start-date", help="(Optional) Start date in DD-MM-YYYY format"
+    )
+    parser.add_argument("--end-date", help="(Optional) End date in DD-MM-YYYY format")
 
     args = parser.parse_args()
     dates = {}
 
     sync_bigquery = True if args.mode == "bq" else False
 
+    if args.mode == None and args.start_date == None and args.end_date == None:
+        print(
+            "ERROR: Please specify a mode (bq or report) or pick a start date and end date"
+        )
+        sys.exit(0)
+
     if args.mode == "report":
         dates["end_date"] = datetime.now().date()
         dates["start_date"] = dates["end_date"] - timedelta(days=6)
-
-    envs = init_envs()
-
-    if args.mode == "bq":
-        credentials = service_account.Credentials.from_service_account_info(
-            envs["bigquery_key"]
-        )
-
+    elif args.mode == "bq":
         patient_training_df = pandas_gbq.read_gbq(
             f"SELECT MAX(date_of_session) AS max_session_date FROM `{envs['bigquery_dataset']}.patient_training_v1`",
             project_id="noorahealth-raw",
-            credentials=credentials,
+            credentials=envs["bigquery_key"],
         )
 
         max_patient_session_date = patient_training_df["max_session_date"].iloc[0]
@@ -377,7 +395,7 @@ if __name__ == "__main__":
         nurse_training_df = pandas_gbq.read_gbq(
             f"SELECT MAX(sessiondateandtime) AS max_session_date FROM `{envs['bigquery_dataset']}.nurse_training_v1`;",
             project_id="noorahealth-raw",
-            credentials=credentials,
+            credentials=envs["bigquery_key"],
         )
 
         max_nurse_session_date = nurse_training_df["max_session_date"].iloc[0]
@@ -393,6 +411,11 @@ if __name__ == "__main__":
         print(
             f"Automatically picked start_date as {dates['start_date']} based on existing data"
         )
+    else:
+        if args.end_date != None:
+            dates["end_date"] = datetime.strptime(args.end_date, "%d-%m-%Y").date()
+        if args.start_date != None:
+            dates["start_date"] = datetime.strptime(args.start_date, "%d-%m-%Y").date()
 
     execute(dates["start_date"], dates["end_date"], envs, sync_bigquery=sync_bigquery)
 

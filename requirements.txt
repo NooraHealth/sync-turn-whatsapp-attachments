@@ -13,3 +13,4 @@ tzdata==2024.1
 urllib3==2.2.2
 XlsxWriter==3.2.0
 pandas-gbq==0.23.1
+python-decouple==3.8
