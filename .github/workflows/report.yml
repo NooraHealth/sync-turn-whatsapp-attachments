@@ -13,12 +13,12 @@ jobs:
     permissions:
         contents: write
     env:
-        USERNAME: ${{ secrets.USERNAME }}
-        PASSWORD: ${{ secrets.PASSWORD }}
+        API_USERNAME: ${{ secrets.USERNAME }}
+        API_PASSWORD: ${{ secrets.PASSWORD }}
         API_URL: ${{ vars.API_URL }}
         SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}
         SLACK_RECEIVER_ID: ${{ vars.SLACK_RECEIVER_ID }}
-        BIGQUERY_SERVICE_ACCOUNT_KEY: ${{ secrets.BIGQUERY_SERVICE_ACCOUNT_KEY }}
+        BQ_KEY: ${{ secrets.BIGQUERY_SERVICE_ACCOUNT_KEY }}
 
     steps:
       - name: Checkout code
