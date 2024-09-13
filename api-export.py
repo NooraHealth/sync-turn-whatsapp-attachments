@@ -203,165 +203,200 @@ def init_envs():
     }
 
 
-def execute(start_date: datetime, end_date: datetime, envs: dict, sync_bigquery: bool):
+def write_to_bigquery(dataframes, envs: dict):
+    pandas_gbq.to_gbq(
+        dataframes["nurses"],
+        f"{envs['bigquery_dataset']}.nurses_v1",
+        project_id="noorahealth-raw",
+        credentials=envs["bigquery_key"],
+        if_exists="append",
+        table_schema=[
+            {"type": "STRING", "name": "username", "mode": "REQUIRED"},
+            {
+                "type": "TIMESTAMP",
+                "name": "user_created_dateandtime",
+                "mode": "NULLABLE",
+            },
+        ],
+    )
+
+    pandas_gbq.to_gbq(
+        dataframes["patient_training"],
+        f"{envs['bigquery_dataset']}.patient_training_v1",
+        project_id="noorahealth-raw",
+        credentials=envs["bigquery_key"],
+        if_exists="append",
+        table_schema=[
+            {"type": "DATE", "name": "date_of_session", "mode": "NULLABLE"},
+            {"type": "INT64", "name": "mothers_trained", "mode": "NULLABLE"},
+            {"type": "INT64", "name": "family_members_trained", "mode": "NULLABLE"},
+            {"type": "INT64", "name": "total_trained", "mode": "NULLABLE"},
+        ],
+    )
+
+    pandas_gbq.to_gbq(
+        dataframes["nurse_training"],
+        f"{envs['bigquery_dataset']}.nurse_training_v1",
+        project_id="noorahealth-raw",
+        credentials=envs["bigquery_key"],
+        if_exists="append",
+        table_schema=[
+            {"type": "INT64", "name": "total_trainees", "mode": "NULLABLE"},
+            {"type": "INT64", "name": "totalmaster_trainer", "mode": "NULLABLE"},
+            {"type": "DATE", "name": "sessiondateandtime", "mode": "NULLABLE"},
+            {"type": "STRING", "name": "traineesdata1", "mode": "NULLABLE"},
+            {"type": "STRING", "name": "trainerdata1", "mode": "NULLABLE"},
+        ],
+    )
+
+
+def write_to_file(dataframes, sheets):
+    with pd.ExcelWriter("data.xlsx", engine="xlsxwriter") as writer:
+        for sheet in sheets:
+            pd.DataFrame(dataframes[sheet]).to_excel(
+                writer, sheet_name=sheet, index=False
+            )
+
+
+def execute(
+    start_date: datetime,
+    end_date: datetime,
+    envs: dict,
+    mode: str,
+    loaders=["patient_training", "nurse_training", "nurses"],
+):
     username = envs["username"]
     password = envs["password"]
     api_url = envs["api_url"]
     report = Report(api_url, username, password)
     report.login()
 
-    with Pool(8) as p:
-        atts = p.map(
-            report.extract_attendance,
-            [*dt_iterate(start_date, end_date, timedelta(days=1))],
-        )
-    attendances = [attendance for att in atts for attendance in att]
+    dataframes = {}
+    patient_training_data = []
+    nurse_training_data = []
 
-    with Pool(8) as p:
-        nurse_trainings = p.map(
-            report.extract_nurse_training,
-            [*dt_iterate(start_date, end_date, timedelta(days=1))],
-        )
-    nurse_training_data = [attendance for att in nurse_trainings for attendance in att]
-
-    if not attendances:
-        print("No attendances found")
-        return
-
-    for attendance in attendances:
-        attendance["md5"] = dict_hash(attendance)
-
-    for nurse_training in nurse_training_data:
-        nurse_training["md5"] = dict_hash(nurse_training)
-
-    phones_in_attendance = [
-        item
-        for attendee in attendances
-        for item in attendee["session_conducted_by"].split(",")
-    ]
-
-    phones_in_training = []
-    for i in nurse_training_data:
-        if i.get("trainerdata1"):
-            for trainer in i["trainerdata1"]:
-                phones_in_training.append(trainer["phone_no"])
-
-        if i.get("traineesdata1"):
-            for trainee in i["traineesdata1"]:
-                phones_in_training.append(trainee["phone_no"])
-
-    all_phones = list(set(phones_in_attendance + phones_in_training))
-
-    if sync_bigquery == True:
-        existing_nurses = pandas_gbq.read_gbq(
-            f"SELECT * FROM `{envs['bigquery_dataset']}.nurses_v1`",
-            project_id="noorahealth-raw",
-            credentials=envs["bigquery_key"],
-        )
-
-        filtered_phones = []
-        for phone in all_phones:
-            search_nurse_df = existing_nurses.query(f'username == "{phone}"')
-            if search_nurse_df.empty:
-                filtered_phones.append(phone)
-
-        phones_list = filtered_phones
-    else:
-        phones_list = phones_in_attendance
-
-    with Pool(8) as p:
-        nss = p.map(report.fetch_nurse_details, [p for p in phones_list])
-    nurses = [n for ns in nss for n in ns]
-
-    nurses_df = pd.DataFrame(nurses)
-
-    nurses_df["user_created_dateandtime"] = pd.to_datetime(
-        nurses_df["user_created_dateandtime"], format="%Y-%m-%d %H:%M:%S"
-    )
-
-    attendance_df = pd.DataFrame(attendances)
-    attendance_df["data1"] = attendance_df["data1"].astype(str)
-    attendance_df["date_of_session"] = pd.to_datetime(
-        attendance_df["date_of_session"], format="%d-%m-%Y"
-    )
-    attendance_df["mothers_trained"] = attendance_df["mothers_trained"].astype(int)
-    attendance_df["family_members_trained"] = attendance_df[
-        "family_members_trained"
-    ].astype(int)
-    attendance_df["total_trained"] = attendance_df["total_trained"].astype(int)
-
-    training_df = pd.DataFrame(nurse_training_data)
-    training_df["trainerdata1"] = training_df["trainerdata1"].astype(str)
-    training_df["traineesdata1"] = training_df["traineesdata1"].astype(str)
-    training_df["sessiondateandtime"] = pd.to_datetime(
-        training_df["sessiondateandtime"], format="%d-%m-%Y"
-    )
-    training_df["totalmaster_trainer"] = training_df["totalmaster_trainer"].astype(int)
-    training_df["total_trainees"] = training_df["total_trainees"].astype(int)
-
-    attendance_df.sort_values("date_of_session", inplace=True)
-    nurses_df.sort_values("user_created_dateandtime", inplace=True)
-
-    if sync_bigquery == True:
-        pandas_gbq.to_gbq(
-            nurses_df,
-            f"{envs['bigquery_dataset']}.nurses_v1",
-            project_id="noorahealth-raw",
-            credentials=envs["bigquery_key"],
-            if_exists="append",
-            table_schema=[
-                {"type": "STRING", "name": "username", "mode": "REQUIRED"},
-                {
-                    "type": "TIMESTAMP",
-                    "name": "user_created_dateandtime",
-                    "mode": "NULLABLE",
-                },
-            ],
-        )
-
-        pandas_gbq.to_gbq(
-            attendance_df,
-            f"{envs['bigquery_dataset']}.patient_training_v1",
-            project_id="noorahealth-raw",
-            credentials=envs["bigquery_key"],
-            if_exists="append",
-            table_schema=[
-                {"type": "DATE", "name": "date_of_session", "mode": "NULLABLE"},
-                {"type": "INT64", "name": "mothers_trained", "mode": "NULLABLE"},
-                {"type": "INT64", "name": "family_members_trained", "mode": "NULLABLE"},
-                {"type": "INT64", "name": "total_trained", "mode": "NULLABLE"},
-            ],
-        )
-
-        pandas_gbq.to_gbq(
-            training_df,
-            f"{envs['bigquery_dataset']}.nurse_training_v1",
-            project_id="noorahealth-raw",
-            credentials=envs["bigquery_key"],
-            if_exists="append",
-            table_schema=[
-                {"type": "INT64", "name": "total_trainees", "mode": "NULLABLE"},
-                {"type": "INT64", "name": "totalmaster_trainer", "mode": "NULLABLE"},
-                {"type": "DATE", "name": "sessiondateandtime", "mode": "NULLABLE"},
-                {"type": "STRING", "name": "traineesdata1", "mode": "NULLABLE"},
-                {"type": "STRING", "name": "trainerdata1", "mode": "NULLABLE"},
-            ],
-        )
-    else:
-        with pd.ExcelWriter("data.xlsx", engine="xlsxwriter") as writer:
-            pd.DataFrame(attendance_df).to_excel(
-                writer, sheet_name="attendance", index=False
+    if "patient_training" in loaders:
+        with Pool(8) as p:
+            atts = p.map(
+                report.extract_attendance,
+                [*dt_iterate(start_date, end_date, timedelta(days=1))],
             )
-            pd.DataFrame(nurses_df).to_excel(writer, sheet_name="nurses", index=False)
+        patient_training_data = [attendance for att in atts for attendance in att]
+
+        for attendance in patient_training_data:
+            attendance["md5"] = dict_hash(attendance)
+
+        attendance_df = pd.DataFrame(patient_training_data)
+        attendance_df["data1"] = attendance_df["data1"].astype(str)
+        attendance_df["date_of_session"] = pd.to_datetime(
+            attendance_df["date_of_session"], format="%d-%m-%Y"
+        )
+        attendance_df["mothers_trained"] = attendance_df["mothers_trained"].astype(int)
+        attendance_df["family_members_trained"] = attendance_df[
+            "family_members_trained"
+        ].astype(int)
+        attendance_df["total_trained"] = attendance_df["total_trained"].astype(int)
+        attendance_df.sort_values("date_of_session", inplace=True)
+
+        dataframes["patient_training"] = attendance_df
+
+    if "nurse_training" in loaders:
+        with Pool(8) as p:
+            nurse_trainings = p.map(
+                report.extract_nurse_training,
+                [*dt_iterate(start_date, end_date, timedelta(days=1))],
+            )
+        nurse_training_data = [
+            attendance for att in nurse_trainings for attendance in att
+        ]
+
+        for nurse_training in nurse_training_data:
+            nurse_training["md5"] = dict_hash(nurse_training)
+
+        nurse_training_df = pd.DataFrame(nurse_training_data)
+        nurse_training_df["trainerdata1"] = nurse_training_df["trainerdata1"].astype(
+            str
+        )
+        nurse_training_df["traineesdata1"] = nurse_training_df["traineesdata1"].astype(
+            str
+        )
+        nurse_training_df["sessiondateandtime"] = pd.to_datetime(
+            nurse_training_df["sessiondateandtime"], format="%d-%m-%Y"
+        )
+        nurse_training_df["totalmaster_trainer"] = nurse_training_df[
+            "totalmaster_trainer"
+        ].astype(int)
+        nurse_training_df["total_trainees"] = nurse_training_df[
+            "total_trainees"
+        ].astype(int)
+
+        dataframes["nurse_training"] = nurse_training_df
+
+    if "nurses" in loaders:
+        phones_in_attendance = [
+            item
+            for attendee in patient_training_data
+            for item in attendee["session_conducted_by"].split(",")
+        ]
+
+        phones_in_training = []
+        for i in nurse_training_data:
+            if i.get("trainerdata1"):
+                for trainer in i["trainerdata1"]:
+                    phones_in_training.append(trainer["phone_no"])
+
+            if i.get("traineesdata1"):
+                for trainee in i["traineesdata1"]:
+                    phones_in_training.append(trainee["phone_no"])
+
+        all_phones = list(set(phones_in_attendance + phones_in_training))
+
+        if mode == "bq":
+            existing_nurses = pandas_gbq.read_gbq(
+                f"SELECT * FROM `{envs['bigquery_dataset']}.nurses_v1`",
+                project_id="noorahealth-raw",
+                credentials=envs["bigquery_key"],
+            )
+
+            filtered_phones = []
+            for phone in all_phones:
+                search_nurse_df = existing_nurses.query(f'username == "{phone}"')
+                if search_nurse_df.empty:
+                    filtered_phones.append(phone)
+
+            phones_list = filtered_phones
+        else:
+            phones_list = phones_in_attendance
+
+        with Pool(8) as p:
+            nss = p.map(report.fetch_nurse_details, [p for p in phones_list])
+        nurses = [n for ns in nss for n in ns]
+
+        nurses_df = pd.DataFrame(nurses)
+
+        nurses_df["user_created_dateandtime"] = pd.to_datetime(
+            nurses_df["user_created_dateandtime"], format="%Y-%m-%d %H:%M:%S"
+        )
+
+        nurses_df.sort_values("user_created_dateandtime", inplace=True)
+
+        dataframes["nurses"] = nurses_df
+
+    if mode == "bq":
+        write_to_bigquery(dataframes, envs)
+    elif mode == "report":
+        write_to_file(dataframes, sheets=loaders)
+    else:
+        write_to_file(dataframes, sheets=loaders)
 
 
 if __name__ == "__main__":
-    envs = init_envs()
     parser = argparse.ArgumentParser(description="Process different modes")
 
     parser.add_argument(
         "--mode",
-        choices=["bq", "report"],
+        choices=["bq", "report", "normal"],
+        default="normal",
         help="Specify the operation mode (bq or report)",
     )
     parser.add_argument(
@@ -372,17 +407,18 @@ if __name__ == "__main__":
     args = parser.parse_args()
     dates = {}
 
-    sync_bigquery = True if args.mode == "bq" else False
-
-    if args.mode == None and args.start_date == None and args.end_date == None:
+    if args.mode == "normal" and args.start_date == None and args.end_date == None:
         print(
-            "ERROR: Please specify a mode (bq or report) or pick a start date and end date"
+            "ERROR: Please specify a mode (bq, report or normal) or pick a start date and end date"
         )
         sys.exit(0)
+
+    envs = init_envs()
 
     if args.mode == "report":
         dates["end_date"] = datetime.now().date()
         dates["start_date"] = dates["end_date"] - timedelta(days=6)
+        loaders = ["patient_training", "nurses"]
     elif args.mode == "bq":
         patient_training_df = pandas_gbq.read_gbq(
             f"SELECT MAX(date_of_session) AS max_session_date FROM `{envs['bigquery_dataset']}.patient_training_v1`",
@@ -411,13 +447,17 @@ if __name__ == "__main__":
         print(
             f"Automatically picked start_date as {dates['start_date']} based on existing data"
         )
+        loaders = ["patient_training", "nurse_training", "nurses"]
     else:
         if args.end_date != None:
             dates["end_date"] = datetime.strptime(args.end_date, "%d-%m-%Y").date()
         if args.start_date != None:
             dates["start_date"] = datetime.strptime(args.start_date, "%d-%m-%Y").date()
+        loaders = ["patient_training", "nurse_training", "nurses"]
 
-    execute(dates["start_date"], dates["end_date"], envs, sync_bigquery=sync_bigquery)
+    execute(
+        dates["start_date"], dates["end_date"], envs, mode=args.mode, loaders=loaders
+    )
 
     if args.mode == "report":
         if envs["slack_token"] != None and envs["slack_user_id"] != None:
