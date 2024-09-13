@@ -36,4 +36,4 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run script
-        run: python api-export.py --mode report
+        run: python api_export.py --mode report
