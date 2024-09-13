@@ -391,21 +391,29 @@ def execute(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Process different modes")
+    parser = argparse.ArgumentParser(
+        description="AP CCP Data Exporter"
+        "\nExport data from AP CCP API to various destinations: "
+        "Local file, BigQuery database, or Slack report.",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
 
     parser.add_argument(
         "--mode",
         choices=["bq", "report", "normal"],
         default="normal",
-        help="Specify the operation mode (bq or report)",
+        help="Specify the operation mode:\n"
+        "- bq: Sync data to BigQuery\n"
+        "- report: Generate an Excel report and send it via Slack\n"
+        "- normal (default): Save data locally to a file",
     )
     parser.add_argument(
-        "--start-date", help="(Optional) Start date in DD-MM-YYYY format"
+        "--start-date",
+        help="(Optional) Start date in DD-MM-YYYY format. This parameter is optional; if omitted, the default start date will be used.",
     )
     parser.add_argument("--end-date", help="(Optional) End date in DD-MM-YYYY format")
 
     args = parser.parse_args()
-    dates = {}
 
     if args.mode == "normal" and args.start_date == None and args.end_date == None:
         print(
@@ -414,6 +422,7 @@ if __name__ == "__main__":
         sys.exit(0)
 
     envs = init_envs()
+    dates = {}
 
     if args.mode == "report":
         dates["end_date"] = datetime.now().date()
