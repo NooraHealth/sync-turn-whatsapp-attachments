@@ -2,6 +2,7 @@ import argparse
 import datetime as dt
 import hashlib
 import json
+import logging
 import sys
 from datetime import datetime, timedelta
 from multiprocessing import Pool
@@ -12,6 +13,23 @@ import requests
 from decouple import config
 from google.oauth2 import service_account
 from slack_sdk import WebClient
+
+
+def setup_logging(verbose=False):
+    logger = logging.getLogger()
+    logger.propagate = False
+    logger.setLevel(logging.DEBUG if verbose else logging.WARN)
+    sh = logging.StreamHandler()
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    sh.setFormatter(formatter)
+    logger.addHandler(sh)
+    return logger
+
+
+logger = setup_logging()
 
 
 def dict_hash(dictionary):
@@ -145,34 +163,34 @@ def init_envs():
     api_url = config("API_URL")
     slack_token = config("SLACK_TOKEN", default=None)
     slack_user_id = config("SLACK_RECEIVER_ID", default=None)
-    bq_dataset = config("BQ_DATASET_NAME")
+    bq_dataset = config("BQ_DATASET_NAME", default=None)
     bq_key = config("BQ_KEY", cast=process_json, default=None)
     bq_key_file_path = config("BQ_KEY_FILE_PATH", default=None)
     bq_key_value = None
 
     if api_username == None:
         raise Exception(
-            "Unable to fetch data. Did you set correct API_USERNAME in respository secrets?"
+            "API_CONFIGURATION_ERROR: Missing API_USERNAME environment variable"
         )
 
     if api_password == None:
-        raise Exception(
-            "Unable to fetch data. Did you set correct API_PASSWORD in respository secrets?"
+        logger.error(
+            "API_CONFIGURATION_ERROR: Missing API_PASSWORD environment variable"
         )
+        sys.exit(0)
 
     if api_url == None:
-        raise Exception(
-            "Unable to fetch data. Did you set correct API_URL in respository variables?"
-        )
+        logger.error("API_CONFIGURATION_ERROR: Missing API_URL environment variable")
+        sys.exit(0)
 
     if bq_dataset == None:
-        print(
-            "Unable to sync data to bigquery. Did you set correct BQ_DATASET_NAME in respository variables?"
+        logger.warning(
+            "BIGQUERY_CONFIGURATION_ERROR: Missing BQ_DATASET_NAME environment variable"
         )
 
     if bq_key == None and bq_key_file_path == None:
-        print(
-            "Unable to sync data to bigquery. Did you set correct BQ_KEY or BQ_KEY_FILE_PATH in respository secrets?"
+        logger.warning(
+            "BIGQUERY_CONFIGURATION_ERROR: Missing BQ_KEY or BQ_KEY_FILE_PATH environment variable"
         )
     else:
         if bq_key != None:
@@ -183,13 +201,13 @@ def init_envs():
             )
 
     if slack_token == None:
-        print(
-            "Unable to send message through slack. Did you set SLACK_TOKEN in repository secrets?"
+        logger.warning(
+            "SLACK_CONFIGURATION_ERROR: Missing SLACK_TOKEN environment variable"
         )
 
     if slack_user_id == None:
-        print(
-            "Unable to send message through slack. Did you set SLACK_RECEIVER_ID in repository variables?"
+        logger.warning(
+            "SLACK_CONFIGURATION_ERROR: Missing SLACK_RECEIVER_ID environment variable"
         )
 
     return {
@@ -390,7 +408,7 @@ def execute(
         write_to_file(dataframes, sheets=loaders)
 
 
-if __name__ == "__main__":
+def parse_args():
     parser = argparse.ArgumentParser(
         description="AP CCP Data Exporter"
         "\nExport data from AP CCP API to various destinations: "
@@ -408,18 +426,32 @@ if __name__ == "__main__":
         "- normal (default): Save data locally to a file",
     )
     parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Increase verbosity (use -v for debug output)",
+    )
+    parser.add_argument(
         "--start-date",
         help="(Optional) Start date in DD-MM-YYYY format. This parameter is optional; if omitted, the default start date will be used.",
     )
     parser.add_argument("--end-date", help="(Optional) End date in DD-MM-YYYY format")
-
     args = parser.parse_args()
 
     if args.mode == "normal" and args.start_date == None and args.end_date == None:
-        print(
-            "ERROR: Please specify a mode (bq, report or normal) or pick a start date and end date"
+        logger.error(
+            "Please specify a mode (bq, report or normal) or pick a start date and end date"
         )
         sys.exit(0)
+    logger.info(f"Mode: {args.mode}")
+
+    return args
+
+
+if __name__ == "__main__":
+    args = parse_args()
+
+    logger.info("Starting AP CCP Data Exporter")
 
     envs = init_envs()
     dates = {}
@@ -453,7 +485,7 @@ if __name__ == "__main__":
 
         dates["end_date"] = datetime.now().date()
 
-        print(
+        logger.info(
             f"Automatically picked start_date as {dates['start_date']} based on existing data"
         )
         loaders = ["patient_training", "nurse_training", "nurses"]
