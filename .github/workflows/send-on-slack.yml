@@ -1,4 +1,4 @@
-name: Send Weekly Report on Slack
+name: Send Data on Slack
 
 on:
   push:
