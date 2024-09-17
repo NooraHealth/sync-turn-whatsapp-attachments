@@ -1,5 +1,5 @@
-[![sync-to-bigquery](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/bq.yml/badge.svg)](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/sync-to-bigquery.yml)
-[![send-on-slack](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/report.yml/badge.svg)](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/send-on-slack.yml)
+[![sync-to-bigquery](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/sync-to-bigquery.yml/badge.svg)](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/sync-to-bigquery.yml)
+[![send-on-slack](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/send-on-slack.yml/badge.svg)](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/send-on-slack.yml)
 
 # Overview
 
