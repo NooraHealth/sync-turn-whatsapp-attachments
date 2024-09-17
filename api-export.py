@@ -3,13 +3,15 @@ import datetime as dt
 import hashlib
 import json
 import os
+import oyaml as yaml
+import uuid
 from datetime import datetime, timedelta
 from multiprocessing import Pool
 
 import pandas as pd
 import pandas_gbq
 import requests
-from google.oauth2 import service_account
+from google.oauth2.service_account import Credentials
 from slack_sdk import WebClient
 
 
@@ -50,7 +52,6 @@ class Report:
             },
         )
         response.raise_for_status()
-
         data = response.json()
 
         assert data["result"] == "success", f"Login unsuccessful: {data}"
@@ -60,16 +61,14 @@ class Report:
 
     @staticmethod
     def has_token_expired(data):
-        return data["result"] == "failed" and data["error"] in (
-            "Invalid or token expired",
-            "Expired token",
-        )
+        error_vals = ("Invalid or token expired", "Expired token")
+        return data["result"] == "failed" and data["error"] in error_vals
 
     @property
     def headers(self):
         return {"Auth-Key": self.key, "Username": self.username}
 
-    def extract_attendance(self, date: datetime):
+    def get_patient_training(self, date: datetime):
         response = requests.get(
             self.url,
             headers=self.headers,
@@ -79,17 +78,16 @@ class Report:
             },
         )
         response.raise_for_status()
-
         data = response.json()
 
         if Report.has_token_expired(data):
             self.login()
-            return self.extract_attendance(date)
+            return self.get_patient_training(date)
         else:
-            print(f"Attendance data retrieved successfully for date: {date}")
+            print(f"Fetched patient training sessions for date {date}")
             return data["data"] if data["result"] == "success" else []
 
-    def extract_nurse_training(self, date: datetime):
+    def get_nurse_training(self, date: datetime):
         response = requests.get(
             self.url,
             headers=self.headers,
@@ -99,318 +97,324 @@ class Report:
             },
         )
         response.raise_for_status()
-
         data = response.json()
 
         if Report.has_token_expired(data):
             self.login()
-            return self.extract_nurse_training(date)
+            return self.get_nurse_training(date)
         else:
-            print(f"Nurse Training data retrieved successfully for date: {date}")
+            print(f"Fetched nurse training sessions for date {date}")
             return data["data"] if data["result"] == "success" else []
 
-    def fetch_nurse_details(self, phone_number: str):
+    def get_nurse_details(self, phone_number: str):
         response = requests.get(
             self.url,
             headers=self.headers,
             json={"get_nurses_detailes_data": True, "username": phone_number},
         )
         response.raise_for_status()
-
         data = response.json()
 
         # check for expired token, and if expired, regenerate token
         if Report.has_token_expired(data):
             # i.e. token expired
             self.login()
-            return self.fetch_nurse_details(phone_number)
+            return self.get_nurse_details(phone_number)
         else:
-            print(
-                f"Nurse profile retrieved successfully for number: {phone_number[:2]}{"X"*8}"
-            )
+            print(f"Fetched nurse details for phone {phone_number[:2]}{"X"*8}")
             return data["data"] if data["result"] == "success" else []
 
 
-def init_envs():
-    username = os.environ.get("USERNAME")
-    password = os.environ.get("PASSWORD")
-    api_url = os.environ.get("API_URL")
-    slack_token = os.environ.get("SLACK_TOKEN")
-    slack_user_id = os.environ.get("SLACK_RECEIVER_ID")
-    bigquery_dataset = os.environ.get("BIGQUERY_DATASET_NAME")
-    bigquery_service_account = json.loads(
-        os.environ.get("BIGQUERY_SERVICE_ACCOUNT_KEY")
-    )
+def check_params(dest, params):
+    required_keys = {"github_ref_name", "api_url", "api_username", "api_password"}
+    if dest == "bigquery":
+        required_keys.update({
+            f"bigquery_{x}" for x in ["project", "dataset", "service_account_key"]
+        })
+    else:
+        required_keys.update({"slack_token", "slack_channel_id"})
 
-    if username == None:
+    if required_keys > params.keys():
+        missing_keys = required_keys.difference(params.keys())
+        jk = ", ".join(missing_keys)
         raise Exception(
-            "Unable to fetch data. Did you set correct API username in respository secrets?"
+            f"dest is {dest}, but the following parameters were not found: {jk}"
         )
 
-    if password == None:
-        raise Exception(
-            "Unable to fetch data. Did you set correct API password in respository secrets?"
-        )
 
-    if api_url == None:
-        raise Exception(
-            "Unable to fetch data. Did you set correct API_URL in respository variables?"
-        )
+def get_params(dest):
+    github_ref_name = os.getenv("GITHUB_REF_NAME")
 
-    if bigquery_dataset == None:
-        print(
-            "Unable to sync data to bigquery. Did you set correct BIGQUERY_DATASET_NAME in respository variables?"
-        )
+    if github_ref_name is None:
+        with open(os.path.join("secrets", "api.yml")) as f:
+            params = yaml.safe_load(f)
+    else:
+        params = yaml.safe_load(os.getenv("API_PARAMS"))
 
-    if bigquery_service_account == None:
-        print(
-            "Unable to sync data to bigquery. Did you set correct BIGQUERY_SERVICE_ACCOUNT_KEY in respository secrets?"
-        )
+    if dest == "bigquery":
+        with open(os.path.join("params", "bigquery.yml")) as f:
+            dest_params = yaml.safe_load(f)
+        envir = "prod" if github_ref_name == "main" else "dev"
+        y = [x for x in dest_params["environments"] if x["name"] == envir][0]
+        y["environment"] = y.pop("name")
+        del dest_params["environments"]
+        dest_params.update(y)
 
-    if slack_token == None:
-        print(
-            "Unable to send message through slack. Did you set SLACK_TOKEN in repository secrets?"
-        )
+        key = "service_account_key"
+        if github_ref_name is None:
+            key_path = os.path.join("secrets", dest_params[key])
+            with open(key_path) as f:
+                dest_params[key] = json.load(f)
+        else:
+            dest_params[key] = json.loads(os.getenv("BIGQUERY_SERVICE_ACCOUNT_KEY"))
 
-    if slack_user_id == None:
-        print(
-            "Unable to send message through slack. Did you set SLACK_RECEIVER_ID in repository variables?"
-        )
+    elif github_ref_name is None:
+        with open(os.path.join("secrets", "slack.yml")) as f:
+            dest_params = yaml.safe_load(f)
+    else:
+        dest_params = yaml.safe_load(os.getenv("SLACK_PARAMS"))
 
-    return {
-        "username": username,
-        "password": password,
-        "api_url": api_url,
-        "slack_token": slack_token,
-        "slack_user_id": slack_user_id,
-        "bigquery_dataset": bigquery_dataset,
-        "bigquery_key": bigquery_service_account,
-    }
+    params = {f"api_{key.lower()}": val for key, val in params.items()}
+    params.update({"github_ref_name": github_ref_name})
+    dest_params = {f"{dest}_{key.lower()}": val for key, val in dest_params.items()}
+    params.update(dest_params)
+    check_params(dest, params)
+    return params
 
 
-def execute(start_date: datetime, end_date: datetime, envs: dict, sync_bigquery: bool):
-    username = envs["username"]
-    password = envs["password"]
-    api_url = envs["api_url"]
-    report = Report(api_url, username, password)
+def read_data_from_api(params, dates):
+    report = Report(params["api_url"], params["api_username"], params["api_password"])
     report.login()
 
     with Pool(8) as p:
-        atts = p.map(
-            report.extract_attendance,
-            [*dt_iterate(start_date, end_date, timedelta(days=1))],
+        patient_trainings_nested = p.map(
+            report.get_patient_training,
+            [*dt_iterate(dates["start"], dates["end"], timedelta(days=1))],
         )
-    attendances = [attendance for att in atts for attendance in att]
+    patient_trainings = [x2 for x1 in patient_trainings_nested for x2 in x1]
 
     with Pool(8) as p:
-        nurse_trainings = p.map(
-            report.extract_nurse_training,
-            [*dt_iterate(start_date, end_date, timedelta(days=1))],
+        nurse_trainings_nested = p.map(
+            report.get_nurse_training,
+            [*dt_iterate(dates["start"], dates["end"], timedelta(days=1))],
         )
-    nurse_training_data = [attendance for att in nurse_trainings for attendance in att]
+    nurse_trainings = [x2 for x1 in nurse_trainings_nested for x2 in x1]
 
-    if not attendances:
-        print("No attendances found")
+    if not patient_trainings:
+        print("No patient training sessions found")
         return
 
-    for attendance in attendances:
-        attendance["md5"] = dict_hash(attendance)
+    for x in patient_trainings:
+        x["md5"] = dict_hash(x)
 
-    for nurse_training in nurse_training_data:
-        nurse_training["md5"] = dict_hash(nurse_training)
+    for x in nurse_trainings:
+        x["md5"] = dict_hash(x)
 
-    phones_in_attendance = [
-        item
-        for attendee in attendances
-        for item in attendee["session_conducted_by"].split(",")
+    phones_in_patient_trainings = [
+        x2 for x1 in patient_trainings for x2 in x1["session_conducted_by"].split(",")
     ]
 
-    phones_in_training = []
-    for i in nurse_training_data:
+    phones_in_nurse_trainings = []
+    for i in nurse_trainings:
         if i.get("trainerdata1"):
             for trainer in i["trainerdata1"]:
-                phones_in_training.append(trainer["phone_no"])
+                phones_in_nurse_trainings.append(trainer["phone_no"])
 
         if i.get("traineesdata1"):
             for trainee in i["traineesdata1"]:
-                phones_in_training.append(trainee["phone_no"])
+                phones_in_nurse_trainings.append(trainee["phone_no"])
 
-    all_phones = list(set(phones_in_attendance + phones_in_training))
-
-    if sync_bigquery == True:
-        credentials = service_account.Credentials.from_service_account_info(
-            envs["bigquery_key"]
-        )
-
-        existing_nurses = pandas_gbq.read_gbq(
-            f"SELECT * FROM `{envs['bigquery_dataset']}.nurses_v1`",
-            project_id="noorahealth-raw",
-            credentials=credentials,
-        )
-
-        filtered_phones = []
-        for phone in all_phones:
-            search_nurse_df = existing_nurses.query(f'username == "{phone}"')
-            if search_nurse_df.empty:
-                filtered_phones.append(phone)
-
-        phones_list = filtered_phones
-    else:
-        phones_list = phones_in_attendance
+    all_phones = list(set(phones_in_patient_trainings + phones_in_nurse_trainings))
 
     with Pool(8) as p:
-        nss = p.map(report.fetch_nurse_details, [p for p in phones_list])
-    nurses = [n for ns in nss for n in ns]
+        nurse_details_nested = p.map(report.get_nurse_details, all_phones)
+    nurses = [x2 for x1 in nurse_details_nested for x2 in x1]
 
     nurses_df = pd.DataFrame(nurses)
-    nurses_df["user_created_dateandtime"] = pd.to_datetime(
-        nurses_df["user_created_dateandtime"], format="%Y-%m-%d %H:%M:%S"
+    col = "user_created_dateandtime"
+    nurses_df[col] = pd.to_datetime(nurses_df[col], format="%Y-%m-%d %H:%M:%S")
+
+    patient_trainings_df = pd.DataFrame(patient_trainings)
+    col_types = {
+        "mothers_trained": "int",
+        "family_members_trained": "int",
+        "total_trained": "int",
+        "data1": "str",
+    }
+    for col, typ in col_types.items():
+        patient_trainings_df[col] = patient_trainings_df[col].astype(typ)
+    col = "date_of_session"
+    patient_trainings_df[col] = pd.to_datetime(
+        patient_trainings_df[col], format="%d-%m-%Y"
     )
 
-    attendance_df = pd.DataFrame(attendances)
-    attendance_df["data1"] = attendance_df["data1"].astype(str)
-    attendance_df["date_of_session"] = pd.to_datetime(
-        attendance_df["date_of_session"], format="%d-%m-%Y"
+    nurse_trainings_df = pd.DataFrame(nurse_trainings)
+    col_types = {
+        "trainerdata1": "str",
+        "traineesdata1": "str",
+        "totalmaster_trainer": "int",
+        "total_trainees": "int",
+    }
+    for col, typ in col_types.items():
+        nurse_trainings_df[col] = nurse_trainings_df[col].astype(typ)
+    col = "sessiondateandtime"
+    nurse_trainings_df[col] = pd.to_datetime(nurse_trainings_df[col], format="%d-%m-%Y")
+
+    data_frames = {
+        "nurses": nurses_df,
+        "patient_training_sessions": patient_trainings_df,
+        "nurse_training_sessions": nurse_trainings_df,
+    }
+    return data_frames
+
+
+def get_dates_from_bigquery(params, default_start_date=dt.date(2024, 6, 1)):
+    creds = Credentials.from_service_account_info(params["bigquery_service_account_key"])
+    table_name = "patient_training_sessions"
+    column_name = "date_of_session"
+
+    q = (f"SELECT MAX({column_name}) AS max_date "
+         f"FROM `{params['bigquery_dataset']}.{table_name}`")
+    df = pandas_gbq.read_gbq(q, project_id=params["bigquery_project"], credentials=creds)
+
+    dates = {"start": default_start_date,
+             "end": datetime.now().date() - timedelta(days=1)}
+    if pd.notna(df["max_date"].iloc[0]):
+        dates["start"] = df["max_date"].iloc[0] + timedelta(days=1)
+    return dates
+
+
+def get_date_label(dates):
+    date_label = dates["start"].strftime("%d %b %Y")
+    if dates["start"] != dates["end"]:
+        date_label += " - " + dates["end"].strftime("%d %b %Y")
+    return date_label
+
+
+def get_output_filename(dates):
+    for key in dates:
+        dates[key] = dates[key].strftime("%Y%m%d")
+    return f"data_{dates['start']}_{dates['end']}.xlsx"
+
+
+def write_data_to_excel(data_frames, filepath="data.xlsx"):
+    with pd.ExcelWriter(filepath, engine="xlsxwriter") as writer:
+        for key, df in sorted(data_frames.items()):
+            pd.DataFrame(df).to_excel(writer, sheet=key, index=False)
+
+
+def write_data_to_slack(params, data_frames, dates):
+    date_label = get_date_label(dates)
+    filename = get_output_filename(dates)
+    write_data_to_excel(data_frames, filename)
+
+    pre = "" if params["github_ref_name"] == "main" else "This is a test. "
+
+    slack = WebClient(token=params["slack_token"])
+    slack.files_upload_v2(
+        channel=params["slack_channel_id"],
+        file=filename,
+        initial_comment=f"{pre}Here are the data for {date_label}.",
+        title=f"Data for {date_label}",
     )
-    attendance_df["mothers_trained"] = attendance_df["mothers_trained"].astype(int)
-    attendance_df["family_members_trained"] = attendance_df[
-        "family_members_trained"
-    ].astype(int)
-    attendance_df["total_trained"] = attendance_df["total_trained"].astype(int)
 
-    training_df = pd.DataFrame(nurse_training_data)
-    training_df["trainerdata1"] = training_df["trainerdata1"].astype(str)
-    training_df["traineesdata1"] = training_df["traineesdata1"].astype(str)
-    training_df["sessiondateandtime"] = pd.to_datetime(
-        training_df["sessiondateandtime"], format="%d-%m-%Y"
+
+def add_extracted_columns(df, extracted_at=None):
+    if extracted_at is not None:
+        df["_extracted_at"] = extracted_at
+    df["_extracted_uuid"] = [uuid.uuid4() for _ in range(len(df.index))]
+    return df
+
+
+def write_data_to_bigquery(params, data_frames):
+    creds = Credentials.from_service_account_info(
+        params["bigquery_service_account_key"]
     )
-    training_df["totalmaster_trainer"] = training_df["totalmaster_trainer"].astype(int)
-    training_df["total_trainees"] = training_df["total_trainees"].astype(int)
 
-    if sync_bigquery == True:
-        pandas_gbq.to_gbq(
-            nurses_df,
-            f"{envs['bigquery_dataset']}.nurses_v1",
-            project_id="noorahealth-raw",
-            credentials=credentials,
-            if_exists="append",
-            table_schema=[
-                {"type": "STRING", "name": "username", "mode": "REQUIRED"},
-                {
-                    "type": "TIMESTAMP",
-                    "name": "user_created_dateandtime",
-                    "mode": "NULLABLE",
-                },
-            ],
-        )
+    extracted_at = datetime.now(dt.timezone.utc).replace(microsecond=0)
+    for key in data_frames:
+        data_frames[key] = add_extracted_columns(data_frames[key], extracted_at)
 
-        pandas_gbq.to_gbq(
-            attendance_df,
-            f"{envs['bigquery_dataset']}.patient_training_v1",
-            project_id="noorahealth-raw",
-            credentials=credentials,
-            if_exists="append",
-            table_schema=[
-                {"type": "DATE", "name": "date_of_session", "mode": "NULLABLE"},
-                {"type": "INT64", "name": "mothers_trained", "mode": "NULLABLE"},
-                {"type": "INT64", "name": "family_members_trained", "mode": "NULLABLE"},
-                {"type": "INT64", "name": "total_trained", "mode": "NULLABLE"},
-            ],
-        )
+    nurses_old = pandas_gbq.read_gbq( # TODO: what if table doesn't exist
+        f"`{params['bigquery_dataset']}.nurses`",
+        # f"SELECT distinct username FROM `{params['bigquery_dataset']}.nurses`", # alternate
+        project_id=params["bigquery_project"],
+        credentials=creds,
+    )
+    if nurses_old is not None and nurses_old.shape[0] > 0:
+        # may be overkill, this keeps the latest data for each username
+        nurses_concat = pd.concat(nurses_old, data_frames["nurses"])
+        data_frames["nurses"] = nurses_concat.group_by("username").tail(1)
+        # alternate if nurses data never change
+        # nurses_new = data_frames["nurses"].merge(
+        #     nurses_old, on = "username", how = "left", indicator = True)
+        # data_frames["nurses"] = nurses_new[nurses_new["_merge"] == "left_only"]
 
+    if_exists = {
+        "nurses": "replace",
+        # "nurses": "append", # alternate
+        "patient_training_sessions": "append",
+        "nurse_training_sessions": "append",
+    }
+
+    table_schemas = {
+        "nurses": [
+            {"type": "STRING", "name": "username", "mode": "REQUIRED"},
+            {"type": "TIMESTAMP", "name": "user_created_dateandtime", "mode": "NULLABLE"},
+            {"type": "TIMESTAMP", "name": "_extracted_at", "mode": "NULLABLE"},
+        ],
+        "patient_training_sessions": [
+            {"type": "DATE", "name": "date_of_session", "mode": "NULLABLE"},
+            {"type": "INT64", "name": "mothers_trained", "mode": "NULLABLE"},
+            {"type": "INT64", "name": "family_members_trained", "mode": "NULLABLE"},
+            {"type": "INT64", "name": "total_trained", "mode": "NULLABLE"},
+            {"type": "TIMESTAMP", "name": "_extracted_at", "mode": "NULLABLE"},
+        ],
+        "nurse_training_sessions": [
+            {"type": "INT64", "name": "total_trainees", "mode": "NULLABLE"},
+            {"type": "INT64", "name": "totalmaster_trainer", "mode": "NULLABLE"},
+            {"type": "DATE", "name": "sessiondateandtime", "mode": "NULLABLE"},
+            {"type": "STRING", "name": "traineesdata1", "mode": "NULLABLE"},
+            {"type": "STRING", "name": "trainerdata1", "mode": "NULLABLE"},
+            {"type": "TIMESTAMP", "name": "_extracted_at", "mode": "NULLABLE"},
+        ],
+    }
+
+    for table_name in sorted(table_schemas.keys()):
         pandas_gbq.to_gbq(
-            training_df,
-            f"{envs['bigquery_dataset']}.nurse_training_v1",
-            project_id="noorahealth-raw",
-            credentials=credentials,
-            if_exists="append",
-            table_schema=[
-                {"type": "INT64", "name": "total_trainees", "mode": "NULLABLE"},
-                {"type": "INT64", "name": "totalmaster_trainer", "mode": "NULLABLE"},
-                {"type": "DATE", "name": "sessiondateandtime", "mode": "NULLABLE"},
-                {"type": "STRING", "name": "traineesdata1", "mode": "NULLABLE"},
-                {"type": "STRING", "name": "trainerdata1", "mode": "NULLABLE"},
-            ],
+            data_frames[table_name],
+            f"{params['bigquery_dataset']}.{table_name}",
+            project_id=params["bigquery_project"],
+            credentials=creds,
+            if_exists=if_exists[table_name],
+            table_schema=table_schemas[table_name],
         )
-    else:
-        with pd.ExcelWriter("data.xlsx", engine="xlsxwriter") as writer:
-            pd.DataFrame(training_df).to_excel(
-                writer, sheet_name="attendance", index=False
-            )
-            pd.DataFrame(nurses_df).to_excel(writer, sheet_name="nurses", index=False)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Process different modes")
-
+    parser = argparse.ArgumentParser(description="Process different destinations")
     parser.add_argument(
-        "--mode",
-        choices=["bq", "report"],
+        "--dest",
+        choices=["bigquery", "slack"],
         required=True,
-        help="Specify the operation mode (bq or report)",
+        help="Specify the destination (bigquery or slack)",
     )
 
     args = parser.parse_args()
-    dates = {}
+    params = get_params(args.dest)
 
-    sync_bigquery = True if args.mode == "bq" else False
+    # assumes data for previous dates never change
+    if args.dest == "bigquery":
+        # TODO: set a proper default start date
+        dates = get_dates_from_bigquery(params)
+    elif args.dest == "slack":
+        today = datetime.now().date()
+        dates = {"start": today - timedelta(days=7), "end": today - timedelta(days=1)}
 
-    if args.mode == "report":
-        dates["end_date"] = datetime.now().date()
-        dates["start_date"] = dates["end_date"] - timedelta(days=6)
+    data = read_data_from_api(params, dates)
 
-    envs = init_envs()
-
-    if args.mode == "bq":
-        credentials = service_account.Credentials.from_service_account_info(
-            envs["bigquery_key"]
-        )
-
-        patient_training_df = pandas_gbq.read_gbq(
-            f"SELECT MAX(date_of_session) AS max_session_date FROM `{envs['bigquery_dataset']}.patient_training_v1`",
-            project_id="noorahealth-raw",
-            credentials=credentials,
-        )
-
-        max_patient_session_date = patient_training_df["max_session_date"].iloc[0]
-
-        nurse_training_df = pandas_gbq.read_gbq(
-            f"SELECT MAX(sessiondateandtime) AS max_session_date FROM `{envs['bigquery_dataset']}.nurse_training_v1`;",
-            project_id="noorahealth-raw",
-            credentials=credentials,
-        )
-
-        max_nurse_session_date = nurse_training_df["max_session_date"].iloc[0]
-
-        if not pd.isnull(max_nurse_session_date):
-            dates["start_date"] = max_nurse_session_date
-
-        if not pd.isnull(max_patient_session_date):
-            dates["start_date"] = max_patient_session_date
-
-        dates["end_date"] = datetime.now().date()
-
-        print(
-            f"Automatically picked start_date as {dates['start_date']} based on existing data"
-        )
-
-    execute(dates["start_date"], dates["end_date"], envs, sync_bigquery=sync_bigquery)
-
-    if args.mode == "report":
-        if envs["slack_token"] != None and envs["slack_user_id"] != None:
-            slack = WebClient(token=envs["slack_token"])
-            file = open("data.xlsx", "rb")
-
-            date_string = ""
-            if dates["start_date"]:
-                date_string += dates["start_date"].strftime("%d %b %Y")
-
-            if dates["end_date"] and dates["start_date"] != dates["end_date"]:
-                date_string += " - " + dates["end_date"].strftime("%d %b %Y")
-
-            slack.files_upload(
-                channels=f"@{envs["slack_user_id"]}",
-                file=file,
-                initial_comment=f"Here is the data for {date_string}",
-                title=f"Data for {date_string}",
-            )
+    if data is not None:
+        if args.dest == "bigquery":
+            write_data_to_bigquery(params, data)
+        elif args.dest == "slack":
+            write_data_to_slack(params, data, dates)

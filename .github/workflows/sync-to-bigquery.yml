@@ -1,0 +1,34 @@
+name: Sync Data to BigQuery
+
+on:
+  push:
+    branches:
+      - 'main'
+  schedule:
+    - cron: '50 22 * * *'
+  pull_request:
+
+jobs:
+  sync-to-bigquery:
+    runs-on: ubuntu-latest
+    env:
+      API_PARAMS: ${{ secrets.API_PARAMS }}
+      BIGQUERY_SERVICE_ACCOUNT_KEY: ${{ secrets.BIGQUERY_SERVICE_ACCOUNT_KEY }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run script
+        run: python -u api-export.py --dest bigquery

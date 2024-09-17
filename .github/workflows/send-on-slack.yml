@@ -5,20 +5,14 @@ on:
     branches:
       - 'main'
   schedule:
-    - cron: '20 19 * * *'
+    - cron: '55 22 * * 0'
 
 jobs:
-  send-weekly-report-on-slack:
+  send-on-slack:
     runs-on: ubuntu-latest
-    permissions:
-        contents: write
     env:
-        USERNAME: ${{ secrets.USERNAME }}
-        PASSWORD: ${{ secrets.PASSWORD }}
-        API_URL: ${{ vars.API_URL }}
-        SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}
-        SLACK_RECEIVER_ID: ${{ vars.SLACK_RECEIVER_ID }}
-        BIGQUERY_SERVICE_ACCOUNT_KEY: ${{ secrets.BIGQUERY_SERVICE_ACCOUNT_KEY }}
+      API_PARAMS: ${{ secrets.API_PARAMS }}
+      SLACK_PARAMS: ${{ secrets.SLACK_PARAMS }}
 
     steps:
       - name: Checkout code
@@ -36,4 +30,4 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run script
-        run: python api-export.py --mode report
+        run: python -u api-export.py --dest slack
