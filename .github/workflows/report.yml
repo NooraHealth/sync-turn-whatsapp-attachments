@@ -1,11 +1,8 @@
 name: Send Weekly Report on Slack
 
 on:
-  push:
-    branches:
-      - 'main'
   schedule:
-    - cron: '20 19 * * *'
+    - cron: '20 19 * * 5'
 
 jobs:
   send-weekly-report-on-slack:
