@@ -31,4 +31,4 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run script
-        run: python -u api-export.py --dest bigquery
+        run: python -u api_export.py --dest bigquery

@@ -30,4 +30,4 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run script
-        run: python -u api-export.py --dest slack
+        run: python -u api_export.py --dest slack
