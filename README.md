@@ -12,6 +12,7 @@ This repository contains GitHub Actions workflows that fetch data from the Andhr
 
 1. Configure the repository secrets locally.
    1. Create a file secrets/api.yml as follows, replacing `xxx` as appropriate:
+
       ```yaml
       url: xxx
       username: xxx
@@ -19,7 +20,7 @@ This repository contains GitHub Actions workflows that fetch data from the Andhr
       ```
       The `url` is currently a proxy URL, because the actual API is inaccessible within GitHub Actions due to an unresolvable misconfiguration on the API server.
    2. Create a file secrets/slack.yml as follows, replacing `xxx` as appropriate:
-   
+
       ```yaml
       token: xxx
       channel_id: xxx
