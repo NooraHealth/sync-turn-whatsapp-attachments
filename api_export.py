@@ -126,8 +126,9 @@ class Report:
 
 
 def check_keys(x, required_keys, name):
-    if required_keys > x.keys():
-        missing_keys = required_keys.difference(x.keys())
+    xk = {} if x is None else x.keys()
+    if required_keys > xk:
+        missing_keys = required_keys.difference(xk)
         jk = ", ".join(missing_keys)
         raise Exception(f"The following {name} parameters were not found: {jk}")
 
