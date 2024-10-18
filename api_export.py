@@ -15,11 +15,17 @@ from google.oauth2 import service_account
 from slack_sdk import WebClient
 
 
+class LogFilter(logging.Filter):
+    def filter(self, record):
+        return record.name == "root"
+
+
 def setup_logging(verbose=False):
     logger = logging.getLogger()
     logger.propagate = False
     logger.setLevel(logging.DEBUG if verbose else logging.WARN)
     sh = logging.StreamHandler()
+    sh.addFilter(LogFilter())
     formatter = logging.Formatter(
         "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
@@ -74,7 +80,7 @@ class Report:
 
         assert data["result"] == "success", f"Login unsuccessful: {data}"
 
-        print("Login successful. Auth-Key:", data["Auth-Key"])
+        logger.debug(f"Login successful. Auth-Key: {data["Auth-Key"]}")
         self.key = data["Auth-Key"]
 
     @staticmethod
@@ -105,7 +111,7 @@ class Report:
             self.login()
             return self.extract_attendance(date)
         else:
-            print(f"Attendance data retrieved successfully for date: {date}")
+            logger.debug(f"Attendance data retrieved successfully for date: {date}")
             return data["data"] if data["result"] == "success" else []
 
     def extract_nurse_training(self, date: datetime):
@@ -125,7 +131,7 @@ class Report:
             self.login()
             return self.extract_nurse_training(date)
         else:
-            print(f"Nurse Training data retrieved successfully for date: {date}")
+            logger.debug(f"Nurse Training data retrieved successfully for date: {date}")
             return data["data"] if data["result"] == "success" else []
 
     def fetch_nurse_details(self, phone_number: str):
@@ -144,7 +150,7 @@ class Report:
             self.login()
             return self.fetch_nurse_details(phone_number)
         else:
-            print(
+            logger.debug(
                 f"Nurse profile retrieved successfully for number: {phone_number[:2]}{"X"*8}"
             )
             return data["data"] if data["result"] == "success" else []
@@ -332,21 +338,31 @@ def execute(
             nurse_training["md5"] = dict_hash(nurse_training)
 
         nurse_training_df = pd.DataFrame(nurse_training_data)
-        nurse_training_df["trainerdata1"] = nurse_training_df["trainerdata1"].astype(
-            str
-        )
-        nurse_training_df["traineesdata1"] = nurse_training_df["traineesdata1"].astype(
-            str
-        )
-        nurse_training_df["sessiondateandtime"] = pd.to_datetime(
-            nurse_training_df["sessiondateandtime"], format="%d-%m-%Y"
-        )
-        nurse_training_df["totalmaster_trainer"] = nurse_training_df[
-            "totalmaster_trainer"
-        ].astype(int)
-        nurse_training_df["total_trainees"] = nurse_training_df[
-            "total_trainees"
-        ].astype(int)
+
+        if 'trainerdata1' in nurse_training_df.columns:
+            nurse_training_df["trainerdata1"] = nurse_training_df["trainerdata1"].astype(
+                str
+            )
+
+        if 'traineesdata1' in nurse_training_df.columns:
+            nurse_training_df["traineesdata1"] = nurse_training_df["traineesdata1"].astype(
+                str
+            )
+
+        if "sessiondateandtime" in nurse_training_df.columns:
+            nurse_training_df["sessiondateandtime"] = pd.to_datetime(
+                nurse_training_df["sessiondateandtime"], format="%d-%m-%Y"
+            )
+
+        if "totalmaster_trainer" in nurse_training_df.columns:
+            nurse_training_df["totalmaster_trainer"] = nurse_training_df[
+                "totalmaster_trainer"
+            ].astype(int)
+
+        if "total_trainees" in nurse_training_df.columns:
+            nurse_training_df["total_trainees"] = nurse_training_df[
+                "total_trainees"
+            ].astype(int)
 
         dataframes["nurse_training"] = nurse_training_df
 
@@ -392,9 +408,10 @@ def execute(
 
         nurses_df = pd.DataFrame(nurses)
 
-        nurses_df["user_created_dateandtime"] = pd.to_datetime(
-            nurses_df["user_created_dateandtime"], format="%Y-%m-%d %H:%M:%S"
-        )
+        if "user_created_dateandtime" in nurses_df.columns:
+            nurses_df["user_created_dateandtime"] = pd.to_datetime(
+                nurses_df["user_created_dateandtime"], format="%Y-%m-%d %H:%M:%S"
+            )
 
         nurses_df.sort_values("user_created_dateandtime", inplace=True)
 
@@ -452,6 +469,7 @@ if __name__ == "__main__":
     args = parse_args()
 
     logger.info("Starting AP CCP Data Exporter")
+    logger.setLevel(logging.DEBUG if args.verbose else logging.INFO)
 
     envs = init_envs()
     dates = {}
@@ -486,7 +504,7 @@ if __name__ == "__main__":
         dates["end_date"] = datetime.now().date()
 
         logger.info(
-            f"Automatically picked start_date as {dates['start_date']} based on existing data"
+            f"Automatically picked start_date as {dates['start_date']} based on existing data in BigQuery dataset"
         )
         loaders = ["patient_training", "nurse_training", "nurses"]
     else:
@@ -518,3 +536,4 @@ if __name__ == "__main__":
                 initial_comment=f"Here is the data for {date_string}",
                 title=f"Data for {date_string}",
             )
+            logger.info("Sent report to slack successfully")
