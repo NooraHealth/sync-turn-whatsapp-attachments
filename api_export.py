@@ -343,7 +343,7 @@ def write_data_to_bigquery(params, data_frames):
     nurses_exists = get_table_exists("nurses", params, creds)
     if nurses_exists:
         nurses_old = pandas_gbq.read_gbq(
-            f"`{params['dataset']}.nurses`", project_id=params["project"],
+            f"select * from `{params['dataset']}.nurses`", project_id=params["project"],
             credentials=creds
         )
         # may be overkill, this keeps the latest data for each username
