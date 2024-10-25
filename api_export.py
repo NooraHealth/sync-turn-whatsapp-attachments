@@ -348,7 +348,7 @@ def write_data_to_bigquery(params, data_frames):
         )
         # may be overkill, this keeps the latest data for each username
         nurses_concat = pd.concat([nurses_old, data_frames["nurses"]])
-        data_frames["nurses"] = nurses_concat.group_by("username").tail(1)
+        data_frames["nurses"] = nurses_concat.groupby("username").tail(1)
 
     if_exists = {
         "nurses": "replace",
