@@ -271,14 +271,17 @@ def read_data_from_api(params, dates):
 def get_dates_from_bigquery(params):
     creds = Credentials.from_service_account_info(params["service_account_key"])
     table_name = "patient_training_sessions"
-    column_name = "date_of_session"
-
-    q = f"select max({column_name}) as max_date from `{params['dataset']}.{table_name}`"
-    df = pandas_gbq.read_gbq(q, project_id=params["project"], credentials=creds)
-
+    col_name = "date_of_session"
     dates = {"start": None, "end": datetime.now().date() - timedelta(days=1)}
-    if pd.notna(df["max_date"].iloc[0]):
-        dates["start"] = df["max_date"].iloc[0] + timedelta(days=1)
+
+    q0 = f"select * from `{params['dataset']}.__TABLES__` where table_id = '{table_name}'"
+    df0 = pandas_gbq.read_gbq(q0, project_id=params["project"], credentials=creds)
+
+    if df0.shape[0] > 0:
+        q = f"select max({col_name}) as max_date from `{params['dataset']}.{table_name}`"
+        df = pandas_gbq.read_gbq(q, project_id=params["project"], credentials=creds)
+        if pd.notna(df["max_date"].iloc[0]):
+            dates["start"] = df["max_date"].iloc[0] + timedelta(days=1)
     return dates
 
 
