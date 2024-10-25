@@ -417,7 +417,7 @@ def parse_args():
 
 def get_dates(args, params):
     if args.dest == "bigquery":
-        default_start_date = dt.date(2024, 10, 15)  # TODO: what should this be?
+        default_start_date = dt.date(2023, 1, 1)  # TODO: what should this be?
         overlap = timedelta(days=30)  # TODO: how far back can past data change?
         dates = get_dates_from_bigquery(params[args.dest])
         if dates["start"] is None:
