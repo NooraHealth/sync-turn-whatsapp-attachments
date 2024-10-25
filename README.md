@@ -5,8 +5,8 @@
 
 This repository contains GitHub Actions workflows that fetch data from the Andhra Pradesh CCP API and then
 
-- Sync the data to the BigQuery data warehouse daily.
-- Send the data as an Excel file via Slack weekly.
+- Sync the data to the BigQuery data warehouse.
+- Send the data as an Excel file via Slack.
 
 ## Setup
 

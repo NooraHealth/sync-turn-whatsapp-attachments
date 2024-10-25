@@ -9,6 +9,7 @@ on:
 
 jobs:
   send-on-slack:
+    if: false
     runs-on: ubuntu-latest
     env:
       API_PARAMS: ${{ secrets.API_PARAMS }}

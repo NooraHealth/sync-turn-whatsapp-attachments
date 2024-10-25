@@ -268,16 +268,15 @@ def read_data_from_api(params, dates):
     return data_frames
 
 
-def get_dates_from_bigquery(params, default_start_date=dt.date(2024, 6, 1)):
+def get_dates_from_bigquery(params):
     creds = Credentials.from_service_account_info(params["service_account_key"])
     table_name = "patient_training_sessions"
     column_name = "date_of_session"
 
-    q = f"SELECT MAX({column_name}) AS max_date FROM `{params['dataset']}.{table_name}`"
+    q = f"select max({column_name}) as max_date from `{params['dataset']}.{table_name}`"
     df = pandas_gbq.read_gbq(q, project_id=params["project"], credentials=creds)
 
-    dates = {"start": default_start_date,
-             "end": datetime.now().date() - timedelta(days=1)}
+    dates = {"start": None, "end": datetime.now().date() - timedelta(days=1)}
     if pd.notna(df["max_date"].iloc[0]):
         dates["start"] = df["max_date"].iloc[0] + timedelta(days=1)
     return dates
@@ -334,9 +333,9 @@ def write_data_to_bigquery(params, data_frames):
     for key in data_frames:
         data_frames[key] = add_extracted_columns(data_frames[key], extracted_at)
 
-    nurses_old = pandas_gbq.read_gbq(  # TODO: what if table doesn't exist
+    nurses_old = pandas_gbq.read_gbq(  # TODO: will this work if table doesn't exist?
         f"`{params['dataset']}.nurses`",
-        # f"SELECT distinct username FROM `{params['dataset']}.nurses`", # alternate
+        # f"select distinct username from `{params['dataset']}.nurses`", # alternate
         project_id=params["project"],
         credentials=creds,
     )
@@ -416,8 +415,13 @@ def parse_args():
 
 def get_dates(args, params):
     if args.dest == "bigquery":
-        # TODO: set a proper default start date
+        default_start_date = dt.date(2024, 6, 1)  # TODO: what should this be?
+        overlap = timedelta(days=30)  # TODO: how far back can past data change?
         dates = get_dates_from_bigquery(params[args.dest])
+        if dates["start"] is None:
+            dates["start"] = default_start_date
+        else:
+            dates["start"] = max(default_start_date, dates["start"] - overlap)
     elif args.dest in ("slack", "local"):
         today = datetime.now().date()
         dates = {"start": today - timedelta(days=7), "end": today - timedelta(days=1)}
@@ -440,8 +444,7 @@ def get_dates(args, params):
 if __name__ == "__main__":
     args = parse_args()
     params = get_params(args.dest)
-    dates = get_dates(args, params)  # assumes data for previous dates never change
-
+    dates = get_dates(args, params)
     data = read_data_from_api(params["api"], dates)
 
     if data is not None:
