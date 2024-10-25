@@ -121,7 +121,7 @@ class Report:
             self.login()
             return self.get_nurse_details(phone_number)
         else:
-            print(f"Fetched nurse details for phone {phone_number[:2]}{"X"*8}")
+            print(f"Fetched nurse details for phone ending in {phone_number[-4:]}")
             return data["data"] if data["result"] == "success" else []
 
 
@@ -268,16 +268,20 @@ def read_data_from_api(params, dates):
     return data_frames
 
 
+def get_table_exists(table_name, params, creds):
+    q = f"select * from `{params['dataset']}.__TABLES__` where table_id = '{table_name}'"
+    df = pandas_gbq.read_gbq(q, project_id=params["project"], credentials=creds)
+    return df.shape[0] > 0
+
+
 def get_dates_from_bigquery(params):
     creds = Credentials.from_service_account_info(params["service_account_key"])
     table_name = "patient_training_sessions"
     col_name = "date_of_session"
     dates = {"start": None, "end": datetime.now().date() - timedelta(days=1)}
 
-    q0 = f"select * from `{params['dataset']}.__TABLES__` where table_id = '{table_name}'"
-    df0 = pandas_gbq.read_gbq(q0, project_id=params["project"], credentials=creds)
-
-    if df0.shape[0] > 0:
+    table_exists = get_table_exists(table_name, params, creds)
+    if table_exists:
         q = f"select max({col_name}) as max_date from `{params['dataset']}.{table_name}`"
         df = pandas_gbq.read_gbq(q, project_id=params["project"], credentials=creds)
         if pd.notna(df["max_date"].iloc[0]):
@@ -336,20 +340,30 @@ def write_data_to_bigquery(params, data_frames):
     for key in data_frames:
         data_frames[key] = add_extracted_columns(data_frames[key], extracted_at)
 
-    nurses_old = pandas_gbq.read_gbq(  # TODO: will this work if table doesn't exist?
-        f"`{params['dataset']}.nurses`",
-        # f"select distinct username from `{params['dataset']}.nurses`", # alternate
-        project_id=params["project"],
-        credentials=creds,
-    )
-    if nurses_old is not None and nurses_old.shape[0] > 0:
+    nurses_exists = get_table_exists("nurses", params, creds)
+    if nurses_exists:
+        nurses_old = pandas_gbq.read_gbq(
+            f"`{params['dataset']}.nurses`", project_id=params["project"],
+            credentials=creds
+        )
         # may be overkill, this keeps the latest data for each username
         nurses_concat = pd.concat(nurses_old, data_frames["nurses"])
         data_frames["nurses"] = nurses_concat.group_by("username").tail(1)
-        # alternate if nurses data never change
-        # nurses_new = data_frames["nurses"].merge(
-        #     nurses_old, on = "username", how = "left", indicator = True)
-        # data_frames["nurses"] = nurses_new[nurses_new["_merge"] == "left_only"]
+
+    # nurses_old = pandas_gbq.read_gbq(  # TODO: will this work if table doesn't exist?
+    #     f"`{params['dataset']}.nurses`",
+    #     # f"select distinct username from `{params['dataset']}.nurses`", # alternate
+    #     project_id=params["project"],
+    #     credentials=creds,
+    # )
+    # if nurses_old is not None and nurses_old.shape[0] > 0:
+    #     # may be overkill, this keeps the latest data for each username
+    #     nurses_concat = pd.concat(nurses_old, data_frames["nurses"])
+    #     data_frames["nurses"] = nurses_concat.group_by("username").tail(1)
+    #     # alternate if nurses data never change
+    #     # nurses_new = data_frames["nurses"].merge(
+    #     #     nurses_old, on = "username", how = "left", indicator = True)
+    #     # data_frames["nurses"] = nurses_new[nurses_new["_merge"] == "left_only"]
 
     if_exists = {
         "nurses": "replace",
@@ -418,7 +432,7 @@ def parse_args():
 
 def get_dates(args, params):
     if args.dest == "bigquery":
-        default_start_date = dt.date(2024, 6, 1)  # TODO: what should this be?
+        default_start_date = dt.date(2024, 10, 15)  # TODO: what should this be?
         overlap = timedelta(days=30)  # TODO: how far back can past data change?
         dates = get_dates_from_bigquery(params[args.dest])
         if dates["start"] is None:
