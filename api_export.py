@@ -227,7 +227,8 @@ def read_data_from_api(params, dates):
 
     nurses_df = pd.DataFrame(nurses)
     col = "user_created_dateandtime"
-    nurses_df[col] = pd.to_datetime(nurses_df[col], format="%Y-%m-%d %H:%M:%S")
+    if col in nurses_df.columns:
+        nurses_df[col] = pd.to_datetime(nurses_df[col], format="%Y-%m-%d %H:%M:%S")
 
     patient_trainings_df = pd.DataFrame(patient_trainings)
     col_types = {
@@ -237,7 +238,8 @@ def read_data_from_api(params, dates):
         "data1": "str",
     }
     for col, typ in col_types.items():
-        patient_trainings_df[col] = patient_trainings_df[col].astype(typ)
+        if col in patient_trainings_df.columns:
+            patient_trainings_df[col] = patient_trainings_df[col].astype(typ)
     col = "date_of_session"
     patient_trainings_df[col] = pd.to_datetime(
         patient_trainings_df[col], format="%d-%m-%Y"
@@ -251,9 +253,12 @@ def read_data_from_api(params, dates):
         "total_trainees": "int",
     }
     for col, typ in col_types.items():
-        nurse_trainings_df[col] = nurse_trainings_df[col].astype(typ)
+        if col in nurse_trainings_df.columns:
+            nurse_trainings_df[col] = nurse_trainings_df[col].astype(typ)
     col = "sessiondateandtime"
-    nurse_trainings_df[col] = pd.to_datetime(nurse_trainings_df[col], format="%d-%m-%Y")
+    if col in nurse_trainings_df.columns:
+        nurse_trainings_df[col] = pd.to_datetime(
+            nurse_trainings_df[col], format="%d-%m-%Y")
 
     data_frames = {
         "nurses": nurses_df,
