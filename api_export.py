@@ -327,7 +327,7 @@ def write_data_to_slack(params, data_frames, dates):
 def add_extracted_columns(df, extracted_at=None):
     if extracted_at is not None:
         df["_extracted_at"] = extracted_at
-    df["_extracted_uuid"] = [uuid.uuid4() for _ in range(len(df.index))]
+    df["_extracted_uuid"] = [str(uuid.uuid4()) for _ in range(len(df.index))]
     return df
 
 
@@ -349,21 +349,6 @@ def write_data_to_bigquery(params, data_frames):
         # may be overkill, this keeps the latest data for each username
         nurses_concat = pd.concat(nurses_old, data_frames["nurses"])
         data_frames["nurses"] = nurses_concat.group_by("username").tail(1)
-
-    # nurses_old = pandas_gbq.read_gbq(  # TODO: will this work if table doesn't exist?
-    #     f"`{params['dataset']}.nurses`",
-    #     # f"select distinct username from `{params['dataset']}.nurses`", # alternate
-    #     project_id=params["project"],
-    #     credentials=creds,
-    # )
-    # if nurses_old is not None and nurses_old.shape[0] > 0:
-    #     # may be overkill, this keeps the latest data for each username
-    #     nurses_concat = pd.concat(nurses_old, data_frames["nurses"])
-    #     data_frames["nurses"] = nurses_concat.group_by("username").tail(1)
-    #     # alternate if nurses data never change
-    #     # nurses_new = data_frames["nurses"].merge(
-    #     #     nurses_old, on = "username", how = "left", indicator = True)
-    #     # data_frames["nurses"] = nurses_new[nurses_new["_merge"] == "left_only"]
 
     if_exists = {
         "nurses": "replace",
