@@ -3,15 +3,15 @@ charset-normalizer==3.3.2
 h11==0.14.0
 idna==3.7
 numpy==2.1.0
+oyaml==1.0
 pandas==2.2.2
 python-dateutil==2.9.0.post0
 pytz==2024.1
 requests==2.32.3
 six==1.16.0
 slack_sdk==3.31.0
+tqdm==4.66.5
 tzdata==2024.1
 urllib3==2.2.2
 XlsxWriter==3.2.0
 pandas-gbq==0.23.1
-python-decouple==3.8
-tqdm==4.66.5

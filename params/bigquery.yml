@@ -1,0 +1,8 @@
+service_account_key: bigquery_service_account_key.json
+environments:
+  - name: prod
+    project: noorahealth-raw
+    dataset: ccp_andhra_pradesh
+  - name: dev
+    project: noorahealth-raw
+    dataset: ccp_andhra_pradesh_dev

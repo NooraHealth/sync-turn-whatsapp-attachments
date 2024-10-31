@@ -2,40 +2,17 @@ import argparse
 import datetime as dt
 import hashlib
 import json
-import logging
-import sys
+import os
+import oyaml as yaml
+import uuid
 from datetime import datetime, timedelta
 from multiprocessing import Pool
 
 import pandas as pd
 import pandas_gbq
 import requests
-from decouple import config
-from google.oauth2 import service_account
+from google.oauth2.service_account import Credentials
 from slack_sdk import WebClient
-
-
-class LogFilter(logging.Filter):
-    def filter(self, record):
-        return record.name == "root"
-
-
-def setup_logging(verbose=False):
-    logger = logging.getLogger()
-    logger.propagate = False
-    logger.setLevel(logging.DEBUG if verbose else logging.WARN)
-    sh = logging.StreamHandler()
-    sh.addFilter(LogFilter())
-    formatter = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-    sh.setFormatter(formatter)
-    logger.addHandler(sh)
-    return logger
-
-
-logger = setup_logging()
 
 
 def dict_hash(dictionary):
@@ -75,26 +52,23 @@ class Report:
             },
         )
         response.raise_for_status()
-
         data = response.json()
 
         assert data["result"] == "success", f"Login unsuccessful: {data}"
 
-        logger.debug(f"Login successful. Auth-Key: {data["Auth-Key"]}")
+        print("Login successful. Auth-Key:", data["Auth-Key"])
         self.key = data["Auth-Key"]
 
     @staticmethod
     def has_token_expired(data):
-        return data["result"] == "failed" and data["error"] in (
-            "Invalid or token expired",
-            "Expired token",
-        )
+        error_vals = ("Invalid or token expired", "Expired token")
+        return data["result"] == "failed" and data["error"] in error_vals
 
     @property
     def headers(self):
         return {"Auth-Key": self.key, "Username": self.username}
 
-    def extract_attendance(self, date: datetime):
+    def get_patient_training(self, date: datetime):
         response = requests.get(
             self.url,
             headers=self.headers,
@@ -104,17 +78,16 @@ class Report:
             },
         )
         response.raise_for_status()
-
         data = response.json()
 
         if Report.has_token_expired(data):
             self.login()
-            return self.extract_attendance(date)
+            return self.get_patient_training(date)
         else:
-            logger.debug(f"Attendance data retrieved successfully for date: {date}")
+            print(f"Fetched patient training sessions for date {date}")
             return data["data"] if data["result"] == "success" else []
 
-    def extract_nurse_training(self, date: datetime):
+    def get_nurse_training(self, date: datetime):
         response = requests.get(
             self.url,
             headers=self.headers,
@@ -124,416 +97,363 @@ class Report:
             },
         )
         response.raise_for_status()
-
         data = response.json()
 
         if Report.has_token_expired(data):
             self.login()
-            return self.extract_nurse_training(date)
+            return self.get_nurse_training(date)
         else:
-            logger.debug(f"Nurse Training data retrieved successfully for date: {date}")
+            print(f"Fetched nurse training sessions for date {date}")
             return data["data"] if data["result"] == "success" else []
 
-    def fetch_nurse_details(self, phone_number: str):
+    def get_nurse_details(self, phone_number: str):
         response = requests.get(
             self.url,
             headers=self.headers,
             json={"get_nurses_detailes_data": True, "username": phone_number},
         )
         response.raise_for_status()
-
         data = response.json()
 
         # check for expired token, and if expired, regenerate token
         if Report.has_token_expired(data):
             # i.e. token expired
             self.login()
-            return self.fetch_nurse_details(phone_number)
+            return self.get_nurse_details(phone_number)
         else:
-            logger.debug(
-                f"Nurse profile retrieved successfully for number: {phone_number[:2]}{"X"*8}"
-            )
+            print(f"Fetched nurse details for phone ending in {phone_number[-4:]}")
             return data["data"] if data["result"] == "success" else []
 
 
-def process_json(value):
-    if value != None:
-        value = value.replace("'", '"')
-        return json.loads(value)
-    return value
+def check_keys(x, required_keys, name):
+    xk = set({}) if x is None else x.keys()
+    if required_keys > xk:
+        missing_keys = required_keys.difference(xk)
+        jk = ", ".join(missing_keys)
+        raise Exception(f"The following {name} parameters were not found: {jk}")
 
 
-def init_envs():
-    api_username = config("API_USERNAME")
-    api_password = config("API_PASSWORD")
-    api_url = config("API_URL")
-    slack_token = config("SLACK_TOKEN", default=None)
-    slack_user_id = config("SLACK_RECEIVER_ID", default=None)
-    bq_dataset = config("BQ_DATASET_NAME", default=None)
-    bq_key = config("BQ_KEY", cast=process_json, default=None)
-    bq_key_file_path = config("BQ_KEY_FILE_PATH", default=None)
-    bq_key_value = None
+def get_params(dest):
+    github_ref_name = os.getenv("GITHUB_REF_NAME")
+    params = {}
 
-    if api_username == None:
-        raise Exception(
-            "API_CONFIGURATION_ERROR: Missing API_USERNAME environment variable"
-        )
-
-    if api_password == None:
-        logger.error(
-            "API_CONFIGURATION_ERROR: Missing API_PASSWORD environment variable"
-        )
-        sys.exit(0)
-
-    if api_url == None:
-        logger.error("API_CONFIGURATION_ERROR: Missing API_URL environment variable")
-        sys.exit(0)
-
-    if bq_dataset == None:
-        logger.warning(
-            "BIGQUERY_CONFIGURATION_ERROR: Missing BQ_DATASET_NAME environment variable"
-        )
-
-    if bq_key == None and bq_key_file_path == None:
-        logger.warning(
-            "BIGQUERY_CONFIGURATION_ERROR: Missing BQ_KEY or BQ_KEY_FILE_PATH environment variable"
-        )
+    if github_ref_name is None:
+        with open(os.path.join("secrets", "api.yml")) as f:
+            params["api"] = yaml.safe_load(f)
     else:
-        if bq_key != None:
-            bq_key_value = service_account.Credentials.from_service_account_info(bq_key)
-        if bq_key_file_path != None:
-            bq_key_value = service_account.Credentials.from_service_account_file(
-                bq_key_file_path
-            )
+        params["api"] = yaml.safe_load(os.getenv("API_PARAMS"))
 
-    if slack_token == None:
-        logger.warning(
-            "SLACK_CONFIGURATION_ERROR: Missing SLACK_TOKEN environment variable"
+    if dest == "bigquery":
+        with open(os.path.join("params", "bigquery.yml")) as f:
+            params[dest] = yaml.safe_load(f)
+        envir = "prod" if github_ref_name == "main" else "dev"
+        y = [x for x in params[dest]["environments"] if x["name"] == envir][0]
+        y["environment"] = y.pop("name")
+        del params[dest]["environments"]
+        params[dest].update(y)
+
+        key = "service_account_key"
+        if github_ref_name is None:
+            key_path = os.path.join("secrets", params[dest][key])
+            with open(key_path) as f:
+                params[dest][key] = json.load(f)
+        else:
+            params[dest][key] = json.loads(os.getenv("BIGQUERY_SERVICE_ACCOUNT_KEY"))
+
+    elif github_ref_name is None:
+        with open(os.path.join("secrets", "slack.yml")) as f:
+            params[dest] = yaml.safe_load(f)
+    else:
+        params[dest] = yaml.safe_load(os.getenv("SLACK_PARAMS"))
+
+    check_keys(params["api"], {"url", "username", "password"}, "api")
+    if dest == "bigquery":
+        check_keys(params[dest], {"project", "dataset", "service_account_key"}, dest)
+    elif dest == "slack":
+        params[dest]["is_test"] = github_ref_name == "main"
+        check_keys(params[dest], {"token", "channel_id", "is_test"}, dest)
+
+    params.update({"github_ref_name": github_ref_name})
+    return params
+
+
+def read_data_from_api(params, dates):
+    report = Report(params["url"], params["username"], params["password"])
+    report.login()
+
+    with Pool(8) as p:
+        patient_trainings_nested = p.map(
+            report.get_patient_training,
+            [*dt_iterate(dates["start"], dates["end"], timedelta(days=1))],
         )
+    patient_trainings = [x2 for x1 in patient_trainings_nested for x2 in x1]
 
-    if slack_user_id == None:
-        logger.warning(
-            "SLACK_CONFIGURATION_ERROR: Missing SLACK_RECEIVER_ID environment variable"
+    with Pool(8) as p:
+        nurse_trainings_nested = p.map(
+            report.get_nurse_training,
+            [*dt_iterate(dates["start"], dates["end"], timedelta(days=1))],
         )
+    nurse_trainings = [x2 for x1 in nurse_trainings_nested for x2 in x1]
 
-    return {
-        "username": api_username,
-        "password": api_password,
-        "api_url": api_url,
-        "slack_token": slack_token,
-        "slack_user_id": slack_user_id,
-        "bigquery_dataset": bq_dataset,
-        "bigquery_key": bq_key_value,
+    if not patient_trainings:
+        print("No patient training sessions found")
+        return
+
+    for x in patient_trainings:
+        x["md5"] = dict_hash(x)
+
+    for x in nurse_trainings:
+        x["md5"] = dict_hash(x)
+
+    phones_in_patient_trainings = [
+        x2 for x1 in patient_trainings for x2 in x1["session_conducted_by"].split(",")
+    ]
+
+    phones_in_nurse_trainings = []
+    for i in nurse_trainings:
+        if i.get("trainerdata1"):
+            for trainer in i["trainerdata1"]:
+                phones_in_nurse_trainings.append(trainer["phone_no"])
+
+        if i.get("traineesdata1"):
+            for trainee in i["traineesdata1"]:
+                phones_in_nurse_trainings.append(trainee["phone_no"])
+
+    all_phones = list(set(phones_in_patient_trainings + phones_in_nurse_trainings))
+
+    with Pool(8) as p:
+        nurse_details_nested = p.map(report.get_nurse_details, all_phones)
+    nurses = [x2 for x1 in nurse_details_nested for x2 in x1]
+
+    nurses_df = pd.DataFrame(nurses)
+    col = "user_created_dateandtime"
+    if col in nurses_df.columns:
+        nurses_df[col] = pd.to_datetime(nurses_df[col], format="%Y-%m-%d %H:%M:%S")
+
+    patient_trainings_df = pd.DataFrame(patient_trainings)
+    col_types = {
+        "mothers_trained": "int",
+        "family_members_trained": "int",
+        "total_trained": "int",
+        "data1": "str",
     }
-
-
-def write_to_bigquery(dataframes, envs: dict):
-    pandas_gbq.to_gbq(
-        dataframes["nurses"],
-        f"{envs['bigquery_dataset']}.nurses_v1",
-        project_id="noorahealth-raw",
-        credentials=envs["bigquery_key"],
-        if_exists="append",
-        table_schema=[
-            {"type": "STRING", "name": "username", "mode": "REQUIRED"},
-            {
-                "type": "TIMESTAMP",
-                "name": "user_created_dateandtime",
-                "mode": "NULLABLE",
-            },
-        ],
+    for col, typ in col_types.items():
+        if col in patient_trainings_df.columns:
+            patient_trainings_df[col] = patient_trainings_df[col].astype(typ)
+    col = "date_of_session"
+    patient_trainings_df[col] = pd.to_datetime(
+        patient_trainings_df[col], format="%d-%m-%Y"
     )
 
-    pandas_gbq.to_gbq(
-        dataframes["patient_training"],
-        f"{envs['bigquery_dataset']}.patient_training_v1",
-        project_id="noorahealth-raw",
-        credentials=envs["bigquery_key"],
-        if_exists="append",
-        table_schema=[
+    nurse_trainings_df = pd.DataFrame(nurse_trainings)
+    col_types = {
+        "trainerdata1": "str",
+        "traineesdata1": "str",
+        "totalmaster_trainer": "int",
+        "total_trainees": "int",
+    }
+    for col, typ in col_types.items():
+        if col in nurse_trainings_df.columns:
+            nurse_trainings_df[col] = nurse_trainings_df[col].astype(typ)
+    col = "sessiondateandtime"
+    if col in nurse_trainings_df.columns:
+        nurse_trainings_df[col] = pd.to_datetime(
+            nurse_trainings_df[col], format="%d-%m-%Y")
+
+    data_frames = {
+        "nurses": nurses_df,
+        "patient_training_sessions": patient_trainings_df,
+        "nurse_training_sessions": nurse_trainings_df,
+    }
+    return data_frames
+
+
+def get_table_exists(table_name, params, creds):
+    q = f"select * from `{params['dataset']}.__TABLES__` where table_id = '{table_name}'"
+    df = pandas_gbq.read_gbq(q, project_id=params["project"], credentials=creds)
+    return df.shape[0] > 0
+
+
+def get_dates_from_bigquery(params):
+    creds = Credentials.from_service_account_info(params["service_account_key"])
+    table_name = "patient_training_sessions"
+    col_name = "date_of_session"
+    dates = {"start": None, "end": datetime.now().date() - timedelta(days=1)}
+
+    table_exists = get_table_exists(table_name, params, creds)
+    if table_exists:
+        q = f"select max({col_name}) as max_date from `{params['dataset']}.{table_name}`"
+        df = pandas_gbq.read_gbq(q, project_id=params["project"], credentials=creds)
+        if pd.notna(df["max_date"].iloc[0]):
+            dates["start"] = df["max_date"].iloc[0] + timedelta(days=1)
+    return dates
+
+
+def get_date_label(dates):
+    date_label = dates["start"].strftime("%d %b %Y")
+    if dates["start"] != dates["end"]:
+        date_label += " - " + dates["end"].strftime("%d %b %Y")
+    return date_label
+
+
+def get_output_filename(dates):
+    for key in dates:
+        dates[key] = dates[key].strftime("%Y%m%d")
+    return f"data_{dates['start']}_{dates['end']}.xlsx"
+
+
+def write_data_to_excel(data_frames, filepath="data.xlsx"):
+    with pd.ExcelWriter(filepath, engine="xlsxwriter") as writer:
+        for key, df in sorted(data_frames.items()):
+            pd.DataFrame(df).to_excel(writer, sheet=key, index=False)
+
+
+def write_data_to_slack(params, data_frames, dates):
+    date_label = get_date_label(dates)
+    filename = get_output_filename(dates)
+    write_data_to_excel(data_frames, filename)
+
+    pre = "This is a test. " if params["is_test"] else ""
+
+    slack = WebClient(token=params["token"])
+    slack.files_upload_v2(
+        channel=params["channel_id"],
+        file=filename,
+        initial_comment=f"{pre}Here are the data for {date_label}.",
+        title=f"Data for {date_label}",
+    )
+
+
+def add_extracted_columns(df, extracted_at=None):
+    if extracted_at is not None:
+        df["_extracted_at"] = extracted_at
+    df["_extracted_uuid"] = [str(uuid.uuid4()) for _ in range(len(df.index))]
+    return df
+
+
+def write_data_to_bigquery(params, data_frames):
+    creds = Credentials.from_service_account_info(
+        params["service_account_key"]
+    )
+
+    extracted_at = datetime.now(dt.timezone.utc).replace(microsecond=0)
+    for key in data_frames:
+        data_frames[key] = add_extracted_columns(data_frames[key], extracted_at)
+
+    nurses_exists = get_table_exists("nurses", params, creds)
+    if nurses_exists:
+        nurses_old = pandas_gbq.read_gbq(
+            f"select * from `{params['dataset']}.nurses`", project_id=params["project"],
+            credentials=creds
+        )
+        # may be overkill, this keeps the latest data for each username
+        nurses_concat = pd.concat([nurses_old, data_frames["nurses"]])
+        data_frames["nurses"] = nurses_concat.groupby("username").tail(1)
+
+    if_exists = {
+        "nurses": "replace",
+        # "nurses": "append", # alternate
+        "patient_training_sessions": "append",
+        "nurse_training_sessions": "append",
+    }
+
+    table_schemas = {
+        "nurses": [
+            {"type": "STRING", "name": "username", "mode": "REQUIRED"},
+            {"type": "TIMESTAMP", "name": "user_created_dateandtime", "mode": "NULLABLE"},
+            {"type": "TIMESTAMP", "name": "_extracted_at", "mode": "NULLABLE"},
+        ],
+        "patient_training_sessions": [
             {"type": "DATE", "name": "date_of_session", "mode": "NULLABLE"},
             {"type": "INT64", "name": "mothers_trained", "mode": "NULLABLE"},
             {"type": "INT64", "name": "family_members_trained", "mode": "NULLABLE"},
             {"type": "INT64", "name": "total_trained", "mode": "NULLABLE"},
+            {"type": "TIMESTAMP", "name": "_extracted_at", "mode": "NULLABLE"},
         ],
-    )
-
-    pandas_gbq.to_gbq(
-        dataframes["nurse_training"],
-        f"{envs['bigquery_dataset']}.nurse_training_v1",
-        project_id="noorahealth-raw",
-        credentials=envs["bigquery_key"],
-        if_exists="append",
-        table_schema=[
+        "nurse_training_sessions": [
             {"type": "INT64", "name": "total_trainees", "mode": "NULLABLE"},
             {"type": "INT64", "name": "totalmaster_trainer", "mode": "NULLABLE"},
             {"type": "DATE", "name": "sessiondateandtime", "mode": "NULLABLE"},
             {"type": "STRING", "name": "traineesdata1", "mode": "NULLABLE"},
             {"type": "STRING", "name": "trainerdata1", "mode": "NULLABLE"},
+            {"type": "TIMESTAMP", "name": "_extracted_at", "mode": "NULLABLE"},
         ],
-    )
+    }
 
-
-def write_to_file(dataframes, sheets):
-    with pd.ExcelWriter("data.xlsx", engine="xlsxwriter") as writer:
-        for sheet in sheets:
-            pd.DataFrame(dataframes[sheet]).to_excel(
-                writer, sheet_name=sheet, index=False
-            )
-
-
-def execute(
-    start_date: datetime,
-    end_date: datetime,
-    envs: dict,
-    mode: str,
-    loaders=["patient_training", "nurse_training", "nurses"],
-):
-    username = envs["username"]
-    password = envs["password"]
-    api_url = envs["api_url"]
-    report = Report(api_url, username, password)
-    report.login()
-
-    dataframes = {}
-    patient_training_data = []
-    nurse_training_data = []
-
-    if "patient_training" in loaders:
-        with Pool(8) as p:
-            atts = p.map(
-                report.extract_attendance,
-                [*dt_iterate(start_date, end_date, timedelta(days=1))],
-            )
-        patient_training_data = [attendance for att in atts for attendance in att]
-
-        for attendance in patient_training_data:
-            attendance["md5"] = dict_hash(attendance)
-
-        attendance_df = pd.DataFrame(patient_training_data)
-        attendance_df["data1"] = attendance_df["data1"].astype(str)
-        attendance_df["date_of_session"] = pd.to_datetime(
-            attendance_df["date_of_session"], format="%d-%m-%Y"
+    for table_name in sorted(table_schemas.keys()):
+        pandas_gbq.to_gbq(
+            data_frames[table_name],
+            f"{params['dataset']}.{table_name}",
+            project_id=params["project"],
+            credentials=creds,
+            if_exists=if_exists[table_name],
+            table_schema=table_schemas[table_name],
         )
-        attendance_df["mothers_trained"] = attendance_df["mothers_trained"].astype(int)
-        attendance_df["family_members_trained"] = attendance_df[
-            "family_members_trained"
-        ].astype(int)
-        attendance_df["total_trained"] = attendance_df["total_trained"].astype(int)
-        attendance_df.sort_values("date_of_session", inplace=True)
-
-        dataframes["patient_training"] = attendance_df
-
-    if "nurse_training" in loaders:
-        with Pool(8) as p:
-            nurse_trainings = p.map(
-                report.extract_nurse_training,
-                [*dt_iterate(start_date, end_date, timedelta(days=1))],
-            )
-        nurse_training_data = [
-            attendance for att in nurse_trainings for attendance in att
-        ]
-
-        for nurse_training in nurse_training_data:
-            nurse_training["md5"] = dict_hash(nurse_training)
-
-        nurse_training_df = pd.DataFrame(nurse_training_data)
-
-        if 'trainerdata1' in nurse_training_df.columns:
-            nurse_training_df["trainerdata1"] = nurse_training_df["trainerdata1"].astype(
-                str
-            )
-
-        if 'traineesdata1' in nurse_training_df.columns:
-            nurse_training_df["traineesdata1"] = nurse_training_df["traineesdata1"].astype(
-                str
-            )
-
-        if "sessiondateandtime" in nurse_training_df.columns:
-            nurse_training_df["sessiondateandtime"] = pd.to_datetime(
-                nurse_training_df["sessiondateandtime"], format="%d-%m-%Y"
-            )
-
-        if "totalmaster_trainer" in nurse_training_df.columns:
-            nurse_training_df["totalmaster_trainer"] = nurse_training_df[
-                "totalmaster_trainer"
-            ].astype(int)
-
-        if "total_trainees" in nurse_training_df.columns:
-            nurse_training_df["total_trainees"] = nurse_training_df[
-                "total_trainees"
-            ].astype(int)
-
-        dataframes["nurse_training"] = nurse_training_df
-
-    if "nurses" in loaders:
-        phones_in_attendance = [
-            item
-            for attendee in patient_training_data
-            for item in attendee["session_conducted_by"].split(",")
-        ]
-
-        phones_in_training = []
-        for i in nurse_training_data:
-            if i.get("trainerdata1"):
-                for trainer in i["trainerdata1"]:
-                    phones_in_training.append(trainer["phone_no"])
-
-            if i.get("traineesdata1"):
-                for trainee in i["traineesdata1"]:
-                    phones_in_training.append(trainee["phone_no"])
-
-        all_phones = list(set(phones_in_attendance + phones_in_training))
-
-        if mode == "bq":
-            existing_nurses = pandas_gbq.read_gbq(
-                f"SELECT * FROM `{envs['bigquery_dataset']}.nurses_v1`",
-                project_id="noorahealth-raw",
-                credentials=envs["bigquery_key"],
-            )
-
-            filtered_phones = []
-            for phone in all_phones:
-                search_nurse_df = existing_nurses.query(f'username == "{phone}"')
-                if search_nurse_df.empty:
-                    filtered_phones.append(phone)
-
-            phones_list = filtered_phones
-        else:
-            phones_list = phones_in_attendance
-
-        with Pool(8) as p:
-            nss = p.map(report.fetch_nurse_details, [p for p in phones_list])
-        nurses = [n for ns in nss for n in ns]
-
-        nurses_df = pd.DataFrame(nurses)
-
-        if "user_created_dateandtime" in nurses_df.columns:
-            nurses_df["user_created_dateandtime"] = pd.to_datetime(
-                nurses_df["user_created_dateandtime"], format="%Y-%m-%d %H:%M:%S"
-            )
-
-        nurses_df.sort_values("user_created_dateandtime", inplace=True)
-
-        dataframes["nurses"] = nurses_df
-
-    if mode == "bq":
-        write_to_bigquery(dataframes, envs)
-    elif mode == "report":
-        write_to_file(dataframes, sheets=loaders)
-    else:
-        write_to_file(dataframes, sheets=loaders)
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="AP CCP Data Exporter"
-        "\nExport data from AP CCP API to various destinations: "
-        "Local file, BigQuery database, or Slack report.",
+        description="Extract and load for the Andhra Pradesh CCP API.",
         formatter_class=argparse.RawTextHelpFormatter,
     )
-
     parser.add_argument(
-        "--mode",
-        choices=["bq", "report", "normal"],
-        default="normal",
-        help="Specify the operation mode:\n"
-        "- bq: Sync data to BigQuery\n"
-        "- report: Generate an Excel report and send it via Slack\n"
-        "- normal (default): Save data locally to a file",
-    )
-    parser.add_argument(
-        "-v",
-        "--verbose",
-        action="store_true",
-        help="Increase verbosity (use -v for debug output)",
+        "--dest",
+        choices=["bigquery", "slack", "local"],
+        default="local",
+        help="Destination to write the data (bigquery, slack, or local)."
     )
     parser.add_argument(
         "--start-date",
-        help="(Optional) Start date in DD-MM-YYYY format. This parameter is optional; if omitted, the default start date will be used.",
+        help="(Optional) Start date in DD-MM-YYYY format. Only used if --dest=local."
     )
-    parser.add_argument("--end-date", help="(Optional) End date in DD-MM-YYYY format")
+    parser.add_argument(
+        "--end-date",
+        help="(Optional) End date in DD-MM-YYYY format. Only used if --dest=local."
+    )
+
     args = parser.parse_args()
-
-    if args.mode == "normal" and args.start_date == None and args.end_date == None:
-        logger.error(
-            "Please specify a mode (bq, report or normal) or pick a start date and end date"
-        )
-        sys.exit(0)
-    logger.info(f"Mode: {args.mode}")
-
     return args
+
+
+def get_dates(args, params):
+    if args.dest == "bigquery":
+        # earliest nurse training 2023-06-06, earliest patient training 2023-08-16
+        default_start_date = dt.date(2023, 6, 1)
+        overlap = timedelta(days=30)  # TODO: how far back can past data change?
+        dates = get_dates_from_bigquery(params[args.dest])
+        if dates["start"] is None:
+            dates["start"] = default_start_date
+        else:
+            dates["start"] = max(default_start_date, dates["start"] - overlap)
+    elif args.dest in ("slack", "local"):
+        today = datetime.now().date()
+        dates = {"start": today - timedelta(days=7), "end": today - timedelta(days=1)}
+
+        if args.dest == "local" and args.start_date is not None:
+            dates["start"] = datetime.strptime(args.start_date, "%d-%m-%Y").date()
+        if args.dest == "local" and args.end_date is not None:
+            dates["end"] = datetime.strptime(args.end_date, "%d-%m-%Y").date()
+
+    if dates["start"] > dates["end"]:
+        raise Exception("Start date cannot be later than end date.")
+    if dates["end"] > datetime.now().date():
+        raise Exception("End date cannot be later than today.")
+
+    print(f"Will attempt to fetch data using start date "
+          f"{dates['start']} and end date {dates['end']}.")
+    return dates
 
 
 if __name__ == "__main__":
     args = parse_args()
+    params = get_params(args.dest)
+    dates = get_dates(args, params)
+    data = read_data_from_api(params["api"], dates)
 
-    logger.info("Starting AP CCP Data Exporter")
-    logger.setLevel(logging.DEBUG if args.verbose else logging.INFO)
-
-    envs = init_envs()
-    dates = {}
-
-    if args.mode == "report":
-        dates["end_date"] = datetime.now().date()
-        dates["start_date"] = dates["end_date"] - timedelta(days=6)
-        loaders = ["patient_training", "nurses"]
-    elif args.mode == "bq":
-        patient_training_df = pandas_gbq.read_gbq(
-            f"SELECT MAX(date_of_session) AS max_session_date FROM `{envs['bigquery_dataset']}.patient_training_v1`",
-            project_id="noorahealth-raw",
-            credentials=envs["bigquery_key"],
-        )
-
-        max_patient_session_date = patient_training_df["max_session_date"].iloc[0]
-
-        nurse_training_df = pandas_gbq.read_gbq(
-            f"SELECT MAX(sessiondateandtime) AS max_session_date FROM `{envs['bigquery_dataset']}.nurse_training_v1`;",
-            project_id="noorahealth-raw",
-            credentials=envs["bigquery_key"],
-        )
-
-        max_nurse_session_date = nurse_training_df["max_session_date"].iloc[0]
-
-        if not pd.isnull(max_nurse_session_date):
-            dates["start_date"] = max_nurse_session_date
-
-        if not pd.isnull(max_patient_session_date):
-            dates["start_date"] = max_patient_session_date
-
-        dates["end_date"] = datetime.now().date()
-
-        logger.info(
-            f"Automatically picked start_date as {dates['start_date']} based on existing data in BigQuery dataset"
-        )
-        loaders = ["patient_training", "nurse_training", "nurses"]
-    else:
-        if args.end_date != None:
-            dates["end_date"] = datetime.strptime(args.end_date, "%d-%m-%Y").date()
-        if args.start_date != None:
-            dates["start_date"] = datetime.strptime(args.start_date, "%d-%m-%Y").date()
-        loaders = ["patient_training", "nurse_training", "nurses"]
-
-    execute(
-        dates["start_date"], dates["end_date"], envs, mode=args.mode, loaders=loaders
-    )
-
-    if args.mode == "report":
-        if envs["slack_token"] != None and envs["slack_user_id"] != None:
-            slack = WebClient(token=envs["slack_token"])
-            file = open("data.xlsx", "rb")
-
-            date_string = ""
-            if dates["start_date"]:
-                date_string += dates["start_date"].strftime("%d %b %Y")
-
-            if dates["end_date"] and dates["start_date"] != dates["end_date"]:
-                date_string += " - " + dates["end_date"].strftime("%d %b %Y")
-
-            slack.files_upload(
-                channels=f"@{envs["slack_user_id"]}",
-                file=file,
-                initial_comment=f"Here is the data for {date_string}",
-                title=f"Data for {date_string}",
-            )
-            logger.info("Sent report to slack successfully")
+    if data is not None:
+        if args.dest == "bigquery":
+            write_data_to_bigquery(params[args.dest], data)
+        elif args.dest == "slack":
+            write_data_to_slack(params[args.dest], data, dates)
+        elif args.dest == "local":
+            write_data_to_excel(data)

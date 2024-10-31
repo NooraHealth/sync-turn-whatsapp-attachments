@@ -1,18 +1,34 @@
-# Daily AP CCP Data Fetch and Slack Report Automation
-This repository contains a scheduled GitHub Action that performs the following tasks daily:
-1. Fetches data from the AP CCP API.
-2. Sends the data as an Excel file via Slack.
-3. Creates a GitHub release with that day's data for historical record-keeping purposes.
+[![sync-to-bigquery](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/sync-to-bigquery.yml/badge.svg)](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/sync-to-bigquery.yml)
+[![send-on-slack](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/send-on-slack.yml/badge.svg)](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/send-on-slack.yml)
 
-## Setup Requirements
-To use this action, you need to configure the following repository secrets and variables:
-1. Repository Secrets:
-   - `USERNAME`: The username credential for the AP CCP API.
-   - `PASSWORD`: The password credential for the AP CCP API.
-   - `SLACK_TOKEN`: The token for the Slack bot account used to send the file.
+# Overview
 
-2. Repository Variables:
-   - `API_URL`: The URL of the AP CCP API. Note that this currently uses a proxy URL because the actual API is inaccessible within the GitHub actions due to a misconfiguration on API server that cannot be resolved.
-   - `SLACK_RECEIVER_ID`: The Slack ID of the user who should receive the message. To obtain a user's Slack ID, refer to this [article](https://www.workast.com/help/article/how-to-find-a-slack-user-id/).
+This repository contains GitHub Actions workflows that fetch data from the Andhra Pradesh CCP API and then
 
-Note: If either `SLACK_RECEIVER_ID` or `SLACK_TOKEN` is not set, the action will skip sending the file via Slack and only create the GitHub release.
+- Sync the data to the BigQuery data warehouse.
+- Send the data as an Excel file via Slack.
+
+## Setup
+
+1. Configure the repository secrets locally.
+   1. Create a file secrets/api.yml as follows, replacing `xxx` as appropriate:
+
+      ```yaml
+      url: xxx
+      username: xxx
+      password: xxx
+      ```
+      The `url` is currently a proxy URL, because the actual API is inaccessible within GitHub Actions due to an unresolvable misconfiguration on the API server.
+   2. Create a file secrets/slack.yml as follows, replacing `xxx` as appropriate:
+
+      ```yaml
+      token: xxx
+      channel_id: xxx
+      ```
+      The `token` is for the bot account used to send the data. To get the `channel_id`, right click to select "View channel details" or "View conversation details", then look at the bottom of the About tab.
+   3. Create a file secrets/bigquery_service_account_key.json that contains the JSON key for the service account that will connect to BigQuery. The name of the file should match the value of `service_account_key` in params/bigquery.yml.
+
+2. Configure the repository secrets on GitHub.
+   1. Copy and paste the contents of secrets/api.yml into a secret named "API_PARAMS".
+   2. Copy and paste the contents of secrets/slack.yml into a secret named "SLACK_PARAMS".
+   3. Copy and paste the contents of secrets/bigquery_service_account_key.json into a secret named "BIGQUERY_SERVICE_ACCOUNT_KEY".
