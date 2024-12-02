@@ -13,7 +13,7 @@ import warnings
 from datetime import datetime, timedelta
 from google.cloud import bigquery
 from google.oauth2.service_account import Credentials
-from multiprocessing import Pool
+from multiprocessing import get_context
 from slack_sdk import WebClient
 from xlsxwriter import Workbook
 
@@ -185,14 +185,14 @@ def read_data_from_api(params, dates):
     report = Report(params["url"], params["username"], params["password"])
     report.login()
 
-    with Pool(8) as p:
+    with get_context("spawn").Pool() as p:
         patient_trainings_nested = p.map(
             report.get_patient_training,
             [*dt_iterate(dates["start"], dates["end"], timedelta(days=1))],
         )
     patient_trainings = [x2 for x1 in patient_trainings_nested for x2 in x1]
 
-    with Pool(8) as p:
+    with get_context("spawn").Pool() as p:
         nurse_trainings_nested = p.map(
             report.get_nurse_training,
             [*dt_iterate(dates["start"], dates["end"], timedelta(days=1))],
@@ -225,7 +225,7 @@ def read_data_from_api(params, dates):
 
     all_phones = list(set(phones_in_patient_trainings + phones_in_nurse_trainings))
 
-    with Pool(8) as p:
+    with get_context("spawn").Pool() as p:
         nurse_details_nested = p.map(report.get_nurse_details, all_phones)
     nurses = [x2 for x1 in nurse_details_nested for x2 in x1]
 
