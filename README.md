@@ -1,12 +1,8 @@
 [![sync-to-bigquery](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/sync-to-bigquery.yml/badge.svg)](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/sync-to-bigquery.yml)
-[![send-on-slack](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/send-on-slack.yml/badge.svg)](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/send-on-slack.yml)
 
 # Overview
 
-This repository contains GitHub Actions workflows that fetch data from the Andhra Pradesh CCP API and then
-
-- Sync the data to the BigQuery data warehouse.
-- Send the data as an Excel file via Slack.
+This repository contains GitHub Actions workflows that fetch data from the Andhra Pradesh CCP API and then sync the data to the BigQuery data warehouse.
 
 When syncing to BigQuery, the code fetches data starting with 30 days prior to the latest data existing in BigQuery. This redundancy accounts for the possibility that historical data behind the API might change. The data are deduplicated in dbt.
 

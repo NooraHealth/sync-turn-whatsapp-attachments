@@ -1,18 +1,21 @@
 import argparse
 import datetime as dt
 import hashlib
+import io
 import json
 import os
 import oyaml as yaml
-import uuid
-from datetime import datetime, timedelta
-from multiprocessing import Pool
-
-import pandas as pd
-import pandas_gbq
+import polars as pl
+import polars.selectors as cs
 import requests
+import uuid
+import warnings
+from datetime import datetime, timedelta
+from google.cloud import bigquery
 from google.oauth2.service_account import Credentials
+from multiprocessing import Pool
 from slack_sdk import WebClient
+from xlsxwriter import Workbook
 
 
 def dict_hash(dictionary):
@@ -45,12 +48,7 @@ class Report:
     def login(self):
         response = requests.get(
             self.url,
-            json={
-                "login": True,
-                "username": self.username,
-                "password": self.password,
-            },
-        )
+            json={"login": True, "username": self.username, "password": self.password})
         response.raise_for_status()
         data = response.json()
 
@@ -117,7 +115,6 @@ class Report:
 
         # check for expired token, and if expired, regenerate token
         if Report.has_token_expired(data):
-            # i.e. token expired
             self.login()
             return self.get_nurse_details(phone_number)
         else:
@@ -169,12 +166,19 @@ def get_params(dest):
     check_keys(params["api"], {"url", "username", "password"}, "api")
     if dest == "bigquery":
         check_keys(params[dest], {"project", "dataset", "service_account_key"}, dest)
+        params[dest]["credentials"] = Credentials.from_service_account_info(
+            params[dest][key])
+        del params[dest][key]
     elif dest == "slack":
         params[dest]["is_test"] = github_ref_name == "main"
         check_keys(params[dest], {"token", "channel_id", "is_test"}, dest)
 
     params.update({"github_ref_name": github_ref_name})
     return params
+
+
+def json_dumps_list(x):
+    return json.dumps(x.to_list())
 
 
 def read_data_from_api(params, dates):
@@ -225,40 +229,35 @@ def read_data_from_api(params, dates):
         nurse_details_nested = p.map(report.get_nurse_details, all_phones)
     nurses = [x2 for x1 in nurse_details_nested for x2 in x1]
 
-    nurses_df = pd.DataFrame(nurses)
-    col = "user_created_dateandtime"
-    if col in nurses_df.columns:
-        nurses_df[col] = pd.to_datetime(nurses_df[col], format="%Y-%m-%d %H:%M:%S")
-
-    patient_trainings_df = pd.DataFrame(patient_trainings)
-    col_types = {
-        "mothers_trained": "int",
-        "family_members_trained": "int",
-        "total_trained": "int",
-        "data1": "str",
-    }
-    for col, typ in col_types.items():
-        if col in patient_trainings_df.columns:
-            patient_trainings_df[col] = patient_trainings_df[col].astype(typ)
-    col = "date_of_session"
-    patient_trainings_df[col] = pd.to_datetime(
-        patient_trainings_df[col], format="%d-%m-%Y"
+    nurses_df = pl.from_dicts(nurses)
+    nurses_df = nurses_df.with_columns(
+        cs.by_name("user_created_dateandtime", require_all=False)
+        .str.to_datetime("%Y-%m-%d %H:%M:%S")
     )
 
-    nurse_trainings_df = pd.DataFrame(nurse_trainings)
-    col_types = {
-        "trainerdata1": "str",
-        "traineesdata1": "str",
-        "totalmaster_trainer": "int",
-        "total_trainees": "int",
-    }
-    for col, typ in col_types.items():
-        if col in nurse_trainings_df.columns:
-            nurse_trainings_df[col] = nurse_trainings_df[col].astype(typ)
-    col = "sessiondateandtime"
-    if col in nurse_trainings_df.columns:
-        nurse_trainings_df[col] = pd.to_datetime(
-            nurse_trainings_df[col], format="%d-%m-%Y")
+    patient_trainings_df = pl.from_dicts(patient_trainings)
+    int_cols = ["mothers_trained", "family_members_trained", "total_trained"]
+    patient_trainings_df = (
+        patient_trainings_df
+        .with_columns(cs.by_name(int_cols, require_all=False).cast(pl.Int64))
+        .with_columns(pl.col("date_of_session").str.to_date("%d-%m-%Y"))
+        .with_columns(
+            cs.by_name("data1", require_all=False)
+            .map_elements(json_dumps_list, return_dtype=pl.String))
+    )
+
+    nurse_trainings_df = pl.from_dicts(nurse_trainings)
+    int_cols = ["totalmaster_trainer", "total_trainees"]
+    struct_cols = ["trainerdata1", "traineesdata1"]
+    nurse_trainings_df = (
+        nurse_trainings_df
+        .with_columns(cs.by_name(int_cols, require_all=False).cast(pl.Int64))
+        .with_columns(
+            cs.by_name("sessiondateandtime", require_all=False).str.to_date("%d-%m-%Y"))
+        .with_columns(
+            cs.by_name(struct_cols, require_all=False)
+            .map_elements(json_dumps_list, return_dtype=pl.String))
+    )
 
     data_frames = {
         "nurses": nurses_df,
@@ -268,24 +267,68 @@ def read_data_from_api(params, dates):
     return data_frames
 
 
-def get_table_exists(table_name, params, creds):
+def get_bigquery_schema(df):
+    n = "NUMERIC"
+    i = "INT64"
+    s = "STRING"
+    dtype_mappings = {
+        pl.Decimal: n, pl.Float32: n, pl.Float64: n,
+        pl.Int8: i, pl.Int16: i, pl.Int32: i, pl.Int64: i,
+        pl.UInt8: i, pl.UInt16: i, pl.UInt32: i, pl.UInt64: i,
+        pl.String: s, pl.Categorical: s, pl.Enum: s, pl.Utf8: s,
+        pl.Binary: "BOOLEAN", pl.Boolean: "BOOLEAN", pl.Date: "DATE",
+        pl.Datetime("us", time_zone="UTC"): "TIMESTAMP",
+        pl.Datetime("us", time_zone=None): "DATETIME",  # won't work for other time zones
+        pl.Time: "TIME", pl.Duration: "INTERVAL"
+    }
+    schema = []
+    for j in range(df.shape[1]):
+        dtype = dtype_mappings[df.dtypes[j]]
+        schema.append(bigquery.SchemaField(df.columns[j], dtype))
+    return schema
+
+
+def write_bigquery(df, table_name, params, write_disposition="WRITE_EMPTY"):
+    schema = get_bigquery_schema(df)
+    client = bigquery.Client(credentials=params["credentials"])
+    with io.BytesIO() as stream:
+        df.write_parquet(stream)
+        stream.seek(0)
+        job = client.load_table_from_file(
+            stream, destination=f"{params['dataset']}.{table_name}",
+            project=params["project"],
+            job_config=bigquery.LoadJobConfig(
+                source_format=bigquery.SourceFormat.PARQUET,
+                schema=schema, write_disposition=write_disposition),
+        )
+    job.result()
+    return df.shape[0]
+
+
+def read_bigquery(query, credentials):
+    with warnings.catch_warnings(action="ignore"):
+        client = bigquery.Client(credentials=credentials)
+        query_job = client.query(query)
+        rows = query_job.result()
+        df = pl.from_arrow(rows.to_arrow())
+    return df
+
+
+def read_bigquery_exists(table_name, params):
     q = f"select * from `{params['dataset']}.__TABLES__` where table_id = '{table_name}'"
-    df = pandas_gbq.read_gbq(q, project_id=params["project"], credentials=creds)
+    df = read_bigquery(q, params["credentials"])
     return df.shape[0] > 0
 
 
 def get_dates_from_bigquery(params):
-    creds = Credentials.from_service_account_info(params["service_account_key"])
     table_name = "patient_training_sessions"
     col_name = "date_of_session"
     dates = {"start": None, "end": datetime.now().date() - timedelta(days=1)}
 
-    table_exists = get_table_exists(table_name, params, creds)
-    if table_exists:
+    if read_bigquery_exists(table_name, params):
         q = f"select max({col_name}) as max_date from `{params['dataset']}.{table_name}`"
-        df = pandas_gbq.read_gbq(q, project_id=params["project"], credentials=creds)
-        if pd.notna(df["max_date"].iloc[0]):
-            dates["start"] = df["max_date"].iloc[0] + timedelta(days=1)
+        df = read_bigquery(q, params["credentials"])
+        dates["start"] = df.item() + timedelta(days=1)
     return dates
 
 
@@ -303,16 +346,15 @@ def get_output_filename(dates):
 
 
 def write_data_to_excel(data_frames, filepath="data.xlsx"):
-    with pd.ExcelWriter(filepath, engine="xlsxwriter") as writer:
+    with Workbook(filepath) as wb:
         for key, df in sorted(data_frames.items()):
-            pd.DataFrame(df).to_excel(writer, sheet=key, index=False)
+            df.write_excel(workbook=wb, worksheet=key)
 
 
 def write_data_to_slack(params, data_frames, dates):
     date_label = get_date_label(dates)
     filename = get_output_filename(dates)
     write_data_to_excel(data_frames, filename)
-
     pre = "This is a test. " if params["is_test"] else ""
 
     slack = WebClient(token=params["token"])
@@ -326,90 +368,51 @@ def write_data_to_slack(params, data_frames, dates):
 
 def add_extracted_columns(df, extracted_at=None):
     if extracted_at is not None:
-        df["_extracted_at"] = extracted_at
-    df["_extracted_uuid"] = [str(uuid.uuid4()) for _ in range(len(df.index))]
+        df = df.with_columns(_extracted_at=pl.lit(extracted_at))
+    uuids = [str(uuid.uuid4()) for _ in range(df.shape[0])]
+    df = df.with_columns(pl.Series("_extracted_uuid", uuids))
     return df
 
 
 def write_data_to_bigquery(params, data_frames):
-    creds = Credentials.from_service_account_info(
-        params["service_account_key"]
-    )
-
     extracted_at = datetime.now(dt.timezone.utc).replace(microsecond=0)
     for key in data_frames:
         data_frames[key] = add_extracted_columns(data_frames[key], extracted_at)
 
-    nurses_exists = get_table_exists("nurses", params, creds)
-    if nurses_exists:
-        nurses_old = pandas_gbq.read_gbq(
-            f"select * from `{params['dataset']}.nurses`", project_id=params["project"],
-            credentials=creds
-        )
-        # may be overkill, this keeps the latest data for each username
-        nurses_concat = pd.concat([nurses_old, data_frames["nurses"]])
-        data_frames["nurses"] = nurses_concat.groupby("username").tail(1)
+    if read_bigquery_exists("nurses", params):
+        # keep the latest data for each username
+        nurses_old = read_bigquery(
+            f"select * from `{params['dataset']}.nurses`", params["credentials"])
+        nurses_concat = pl.concat(
+            [nurses_old, data_frames["nurses"]], how="diagonal_relaxed")
+        data_frames["nurses"] = nurses_concat.group_by("username").tail(1)
 
-    if_exists = {
-        "nurses": "replace",
-        # "nurses": "append", # alternate
-        "patient_training_sessions": "append",
-        "nurse_training_sessions": "append",
+    write_dispositions = {
+        "nurses": "WRITE_TRUNCATE",
+        "patient_training_sessions": "WRITE_APPEND",
+        "nurse_training_sessions": "WRITE_APPEND",
     }
 
-    table_schemas = {
-        "nurses": [
-            {"type": "STRING", "name": "username", "mode": "REQUIRED"},
-            {"type": "TIMESTAMP", "name": "user_created_dateandtime", "mode": "NULLABLE"},
-            {"type": "TIMESTAMP", "name": "_extracted_at", "mode": "NULLABLE"},
-        ],
-        "patient_training_sessions": [
-            {"type": "DATE", "name": "date_of_session", "mode": "NULLABLE"},
-            {"type": "INT64", "name": "mothers_trained", "mode": "NULLABLE"},
-            {"type": "INT64", "name": "family_members_trained", "mode": "NULLABLE"},
-            {"type": "INT64", "name": "total_trained", "mode": "NULLABLE"},
-            {"type": "TIMESTAMP", "name": "_extracted_at", "mode": "NULLABLE"},
-        ],
-        "nurse_training_sessions": [
-            {"type": "INT64", "name": "total_trainees", "mode": "NULLABLE"},
-            {"type": "INT64", "name": "totalmaster_trainer", "mode": "NULLABLE"},
-            {"type": "DATE", "name": "sessiondateandtime", "mode": "NULLABLE"},
-            {"type": "STRING", "name": "traineesdata1", "mode": "NULLABLE"},
-            {"type": "STRING", "name": "trainerdata1", "mode": "NULLABLE"},
-            {"type": "TIMESTAMP", "name": "_extracted_at", "mode": "NULLABLE"},
-        ],
-    }
-
-    for table_name in sorted(table_schemas.keys()):
-        pandas_gbq.to_gbq(
-            data_frames[table_name],
-            f"{params['dataset']}.{table_name}",
-            project_id=params["project"],
-            credentials=creds,
-            if_exists=if_exists[table_name],
-            table_schema=table_schemas[table_name],
-        )
+    for table_name in sorted(data_frames.keys()):
+        write_bigquery(
+            data_frames[table_name], table_name, params, write_dispositions[table_name])
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Extract and load for the Andhra Pradesh CCP API.",
-        formatter_class=argparse.RawTextHelpFormatter,
-    )
+        description="Extract and load for the CCP Andhra Pradesh API.",
+        formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument(
         "--dest",
         choices=["bigquery", "slack", "local"],
         default="local",
-        help="Destination to write the data (bigquery, slack, or local)."
-    )
+        help="Destination to write the data (bigquery, slack, or local).")
     parser.add_argument(
         "--start-date",
-        help="(Optional) Start date in DD-MM-YYYY format. Only used if --dest=local."
-    )
+        help="(Optional) Start date in DD-MM-YYYY format. Only used if --dest=local.")
     parser.add_argument(
         "--end-date",
-        help="(Optional) End date in DD-MM-YYYY format. Only used if --dest=local."
-    )
+        help="(Optional) End date in DD-MM-YYYY format. Only used if --dest=local.")
 
     args = parser.parse_args()
     return args
@@ -439,8 +442,8 @@ def get_dates(args, params):
     if dates["end"] > datetime.now().date():
         raise Exception("End date cannot be later than today.")
 
-    print(f"Will attempt to fetch data using start date "
-          f"{dates['start']} and end date {dates['end']}.")
+    print(f"Attempting to fetch data between {dates['start']} "
+          f"and {dates['end']}, inclusive.")
     return dates
 
 
