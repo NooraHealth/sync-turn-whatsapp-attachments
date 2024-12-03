@@ -7,6 +7,7 @@ on:
   schedule:
     - cron: '50 18 * * 0'
   pull_request:
+  workflow_dispatch:
 
 jobs:
   sync-to-bigquery:
