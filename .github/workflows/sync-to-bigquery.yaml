@@ -1,11 +1,8 @@
 name: Sync Data to BigQuery
 
 on:
-  # push:
-  #   branches:
-  #     - 'main'
   schedule:
-    - cron: '50 18 * * 0'
+    - cron: '30 18 * * 0'
   pull_request:
   workflow_dispatch:
 
@@ -14,7 +11,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       API_PARAMS: ${{ secrets.API_PARAMS }}
-      BIGQUERY_SERVICE_ACCOUNT_KEY: ${{ secrets.BIGQUERY_SERVICE_ACCOUNT_KEY }}
+      SERVICE_ACCOUNT_KEY: ${{ secrets.SERVICE_ACCOUNT_KEY }}
+      SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
     steps:
       - name: Checkout code

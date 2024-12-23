@@ -1,8 +1,8 @@
-[![sync-to-bigquery](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/sync-to-bigquery.yml/badge.svg)](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/sync-to-bigquery.yml)
+[![sync-to-bigquery](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/sync-to-bigquery.yaml/badge.svg)](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/sync-to-bigquery.yaml)
 
 # Overview
 
-This repository contains GitHub Actions workflows that fetch data from the Andhra Pradesh CCP API and then sync the data to the BigQuery data warehouse.
+This repository contains GitHub Actions workflows that fetch data from the CCP Andhra Pradesh API and then sync the data to the BigQuery data warehouse.
 
 When syncing to BigQuery, the code fetches data starting with 30 days prior to the latest data existing in BigQuery. This redundancy accounts for the possibility that historical data behind the API can change (per Hassan, editing or deleting submissions is not allowed, but new submissions can be back-dated up to 15 days). The data are deduplicated in dbt.
 
@@ -31,9 +31,9 @@ When syncing to BigQuery, the code fetches data starting with 30 days prior to t
       channel_id: xxx
       ```
       The `token` is for the bot account used to send the data. To get the `channel_id`, right click to select "View channel details" or "View conversation details", then look at the bottom of the About tab.
-   3. Create a file secrets/bigquery_service_account_key.json that contains the JSON key for the service account that will connect to BigQuery. The name of the file should match the value of `service_account_key` in params/bigquery.yml.
+   3. Create a file secrets/service_account_key.json that contains the JSON key for the service account that will connect to BigQuery. The name of the file should match the value of `service_account_key` in params/bigquery.yml.
 
 3. Configure the repository secrets on GitHub.
    1. Copy and paste the contents of secrets/api.yml into a secret named "API_PARAMS".
    2. Copy and paste the contents of secrets/slack.yml into a secret named "SLACK_PARAMS".
-   3. Copy and paste the contents of secrets/bigquery_service_account_key.json into a secret named "BIGQUERY_SERVICE_ACCOUNT_KEY".
+   3. Copy and paste the contents of secrets/bigquery_service_account_key.json into a secret named "SERVICE_ACCOUNT_KEY".
