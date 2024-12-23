@@ -4,7 +4,7 @@
 
 This repository contains GitHub Actions workflows that fetch data from the CCP Andhra Pradesh API and then sync the data to the BigQuery data warehouse.
 
-When syncing to BigQuery, the code fetches data starting with 30 days prior to the latest data existing in BigQuery. This redundancy accounts for the possibility that historical data behind the API might change. The data are deduplicated in dbt.
+When syncing to BigQuery, the code fetches data starting with 30 days prior to the latest data existing in BigQuery. This redundancy accounts for the possibility that historical data behind the API can change (per Hassan, editing or deleting submissions is not allowed, but new submissions can be back-dated up to 15 days). The data are deduplicated in dbt.
 
 ## Setup
 
