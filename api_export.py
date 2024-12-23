@@ -357,10 +357,10 @@ def get_dates_from_bigquery(
 
 
 def get_dates(args, params):
+    today = datetime.now().date()
     if args.dest == "bigquery":
         dates = get_dates_from_bigquery(params)
     else:
-        today = datetime.now().date()
         dates = dict(start=today - timedelta(days=7), end=today - timedelta(days=1))
 
         if args.start_date is not None:
