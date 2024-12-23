@@ -1,3 +1,5 @@
 secrets/
-*.xslx
+*.xlsx
 *.parquet
+__pycache__/
+*.py[oc]

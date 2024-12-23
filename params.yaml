@@ -1,4 +1,4 @@
-service_account_key: bigquery_service_account_key.json
+service_account_key: service_account_key.json
 environments:
   - name: prod
     project: noorahealth-raw
@@ -6,3 +6,4 @@ environments:
   - name: dev
     project: noorahealth-raw
     dataset: ccp_andhra_pradesh_dev
+slack_channel_id: C080138T9S6

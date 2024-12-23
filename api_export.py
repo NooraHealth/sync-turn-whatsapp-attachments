@@ -8,14 +8,15 @@ import oyaml as yaml
 import polars as pl
 import polars.selectors as cs
 import requests
+import slack_sdk
 import uuid
 import warnings
+import xlsxwriter
 from datetime import datetime, timedelta
 from google.cloud import bigquery
 from google.oauth2.service_account import Credentials
 from multiprocessing import Pool
-from slack_sdk import WebClient
-from xlsxwriter import Workbook
+from pathlib import Path
 
 
 def dict_hash(dictionary):
@@ -122,56 +123,33 @@ class Report:
             return data["data"] if data["result"] == "success" else []
 
 
-def check_keys(x, required_keys, name):
-    xk = set({}) if x is None else x.keys()
-    if required_keys > xk:
-        missing_keys = required_keys.difference(xk)
-        jk = ", ".join(missing_keys)
-        raise Exception(f"The following {name} parameters were not found: {jk}")
-
-
-def get_params(dest):
+def get_params(filepath="params.yaml"):
     github_ref_name = os.getenv("GITHUB_REF_NAME")
-    params = {}
 
+    with open(filepath) as f:
+        params = yaml.safe_load(f)
+
+    key = "service_account_key"
     if github_ref_name is None:
-        with open(os.path.join("secrets", "api.yml")) as f:
+        with open(Path("secrets", params[key])) as f:
+            params[key] = json.load(f)
+        with open(Path("secrets", "slack_token.txt")) as f:
+            params["slack_token"] = f.read().strip("\n")
+        with open(Path("secrets", "api.yaml")) as f:
             params["api"] = yaml.safe_load(f)
     else:
+        params[key] = json.loads(os.getenv("SERVICE_ACCOUNT_KEY"))
+        params["slack_token"] = os.getenv("SLACK_TOKEN")
         params["api"] = yaml.safe_load(os.getenv("API_PARAMS"))
 
-    if dest == "bigquery":
-        with open(os.path.join("params", "bigquery.yml")) as f:
-            params[dest] = yaml.safe_load(f)
-        envir = "prod" if github_ref_name == "main" else "dev"
-        y = [x for x in params[dest]["environments"] if x["name"] == envir][0]
-        y["environment"] = y.pop("name")
-        del params[dest]["environments"]
-        params[dest].update(y)
+    params["credentials"] = Credentials.from_service_account_info(params[key])
+    del params[key]
 
-        key = "service_account_key"
-        if github_ref_name is None:
-            key_path = os.path.join("secrets", params[dest][key])
-            with open(key_path) as f:
-                params[dest][key] = json.load(f)
-        else:
-            params[dest][key] = json.loads(os.getenv("BIGQUERY_SERVICE_ACCOUNT_KEY"))
-
-    elif github_ref_name is None:
-        with open(os.path.join("secrets", "slack.yml")) as f:
-            params[dest] = yaml.safe_load(f)
-    else:
-        params[dest] = yaml.safe_load(os.getenv("SLACK_PARAMS"))
-
-    check_keys(params["api"], {"url", "username", "password"}, "api")
-    if dest == "bigquery":
-        check_keys(params[dest], {"project", "dataset", "service_account_key"}, dest)
-        params[dest]["credentials"] = Credentials.from_service_account_info(
-            params[dest][key])
-        del params[dest][key]
-    elif dest == "slack":
-        params[dest]["is_test"] = github_ref_name == "main"
-        check_keys(params[dest], {"token", "channel_id", "is_test"}, dest)
+    envir = "prod" if github_ref_name == "main" else "dev"
+    y = [x for x in params["environments"] if x["name"] == envir][0]
+    y["environment"] = y.pop("name")
+    del params["environments"]
+    params.update(y)
 
     params.update({"github_ref_name": github_ref_name})
     return params
@@ -197,6 +175,11 @@ def read_data_from_api(params, dates):
             report.get_nurse_training,
             [*dt_iterate(dates["start"], dates["end"], timedelta(days=1))],
         )
+    # nurse_trainings_nested = map(
+    #     report.get_nurse_training,
+    #     [*dt_iterate(dates["start"], dates["end"], timedelta(days=1))],
+    # )
+
     nurse_trainings = [x2 for x1 in nurse_trainings_nested for x2 in x1]
 
     if not patient_trainings:
@@ -227,6 +210,7 @@ def read_data_from_api(params, dates):
 
     with Pool() as p:
         nurse_details_nested = p.map(report.get_nurse_details, all_phones)
+    # nurse_details_nested = map(report.get_nurse_details, all_phones)
     nurses = [x2 for x1 in nurse_details_nested for x2 in x1]
 
     nurses_df = pl.from_dicts(nurses)
@@ -307,10 +291,8 @@ def write_bigquery(df, table_name, params, write_disposition="WRITE_EMPTY"):
 
 def read_bigquery(query, credentials):
     with warnings.catch_warnings(action="ignore"):
-        client = bigquery.Client(credentials=credentials)
-        query_job = client.query(query)
-        rows = query_job.result()
-        df = pl.from_arrow(rows.to_arrow())
+        rows = bigquery.Client(credentials=credentials).query(query).result().to_arrow()
+        df = pl.from_arrow(rows)
     return df
 
 
@@ -320,50 +302,10 @@ def read_bigquery_exists(table_name, params):
     return df.shape[0] > 0
 
 
-def get_dates_from_bigquery(params):
-    table_name = "patient_training_sessions"
-    col_name = "date_of_session"
-    dates = {"start": None, "end": datetime.now().date() - timedelta(days=1)}
-
-    if read_bigquery_exists(table_name, params):
-        q = f"select max({col_name}) as max_date from `{params['dataset']}.{table_name}`"
-        df = read_bigquery(q, params["credentials"])
-        dates["start"] = df.item() + timedelta(days=1)
-    return dates
-
-
-def get_date_label(dates):
-    date_label = dates["start"].strftime("%d %b %Y")
-    if dates["start"] != dates["end"]:
-        date_label += " - " + dates["end"].strftime("%d %b %Y")
-    return date_label
-
-
-def get_output_filename(dates):
-    for key in dates:
-        dates[key] = dates[key].strftime("%Y%m%d")
-    return f"data_{dates['start']}_{dates['end']}.xlsx"
-
-
 def write_data_to_excel(data_frames, filepath="data.xlsx"):
-    with Workbook(filepath) as wb:
+    with xlsxwriter.Workbook(filepath) as wb:
         for key, df in sorted(data_frames.items()):
             df.write_excel(workbook=wb, worksheet=key)
-
-
-def write_data_to_slack(params, data_frames, dates):
-    date_label = get_date_label(dates)
-    filename = get_output_filename(dates)
-    write_data_to_excel(data_frames, filename)
-    pre = "This is a test. " if params["is_test"] else ""
-
-    slack = WebClient(token=params["token"])
-    slack.files_upload_v2(
-        channel=params["channel_id"],
-        file=filename,
-        initial_comment=f"{pre}Here are the data for {date_label}.",
-        title=f"Data for {date_label}",
-    )
 
 
 def add_extracted_columns(df, extracted_at=None):
@@ -398,48 +340,37 @@ def write_data_to_bigquery(params, data_frames):
             data_frames[table_name], table_name, params, write_dispositions[table_name])
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Extract and load for the CCP Andhra Pradesh API.",
-        formatter_class=argparse.RawTextHelpFormatter)
-    parser.add_argument(
-        "--dest",
-        choices=["bigquery", "slack", "local"],
-        default="local",
-        help="Destination to write the data (bigquery, slack, or local).")
-    parser.add_argument(
-        "--start-date",
-        help="(Optional) Start date in DD-MM-YYYY format. Only used if --dest=local.")
-    parser.add_argument(
-        "--end-date",
-        help="(Optional) End date in DD-MM-YYYY format. Only used if --dest=local.")
+def get_dates_from_bigquery(
+        params, default_start_date=dt.date(2023, 6, 1), overlap=30):
+    # earliest nurse training 2023-06-06, earliest patient training 2023-08-16
+    table_name = "patient_training_sessions"
+    col_name = "date_of_session"
+    dates = dict(start=default_start_date, end=datetime.now().date() - timedelta(days=1))
 
-    args = parser.parse_args()
-    return args
+    if read_bigquery_exists(table_name, params):
+        q = f"select max({col_name}) as max_date from `{params['dataset']}.{table_name}`"
+        df = read_bigquery(q, params["credentials"])
+        if df.item() is not None:
+            dates["start"] = df.item() - timedelta(days=overlap - 1)
+
+    return dates
 
 
 def get_dates(args, params):
     if args.dest == "bigquery":
-        # earliest nurse training 2023-06-06, earliest patient training 2023-08-16
-        default_start_date = dt.date(2023, 6, 1)
-        overlap = timedelta(days=30)  # TODO: how far back can past data change?
-        dates = get_dates_from_bigquery(params[args.dest])
-        if dates["start"] is None:
-            dates["start"] = default_start_date
-        else:
-            dates["start"] = max(default_start_date, dates["start"] - overlap)
-    elif args.dest in ("slack", "local"):
+        dates = get_dates_from_bigquery(params)
+    else:
         today = datetime.now().date()
-        dates = {"start": today - timedelta(days=7), "end": today - timedelta(days=1)}
+        dates = dict(start=today - timedelta(days=7), end=today - timedelta(days=1))
 
-        if args.dest == "local" and args.start_date is not None:
-            dates["start"] = datetime.strptime(args.start_date, "%d-%m-%Y").date()
-        if args.dest == "local" and args.end_date is not None:
-            dates["end"] = datetime.strptime(args.end_date, "%d-%m-%Y").date()
+        if args.start_date is not None:
+            dates["start"] = args.start_date
+        if args.end_date is not None:
+            dates["end"] = args.end_date
 
     if dates["start"] > dates["end"]:
         raise Exception("Start date cannot be later than end date.")
-    if dates["end"] > datetime.now().date():
+    if dates["end"] > today:
         raise Exception("End date cannot be later than today.")
 
     print(f"Attempting to fetch data between {dates['start']} "
@@ -447,16 +378,68 @@ def get_dates(args, params):
     return dates
 
 
-if __name__ == "__main__":
-    args = parse_args()
-    params = get_params(args.dest)
-    dates = get_dates(args, params)
-    data = read_data_from_api(params["api"], dates)
+def get_slack_message_text(e):
+    text = (
+        f":warning: Sync for CCP Andhra Pradesh failed with the following error:"
+        f"\n\n`{str(e)}`"
+    )
+    if os.getenv("RUN_URL") is not None:
+        run_url = os.getenv("RUN_URL")
+        text += f"\n\nPlease see the GitHub Actions <{run_url}|workflow run log>."
+    return text
 
-    if data is not None:
+
+def send_message_to_slack(text, channel_id, token):
+    client = slack_sdk.WebClient(token=token)
+    try:
+        client.chat_postMessage(channel=channel_id, text=text)
+    except slack_sdk.SlackApiError as e:
+        assert e.response["error"]
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Extract and load for the CCP Andhra Pradesh API.",
+        formatter_class=argparse.RawTextHelpFormatter)
+    parser.add_argument(
+        "--dest",
+        choices=["bigquery", "local"],
+        default="local",
+        help="Destination to write the data (bigquery or local).")
+    parser.add_argument(
+        "--start-date",
+        type=lambda x: datetime.strptime(x, "%Y-%m-%d").date(),
+        help="(Optional) Start date in YYYY-MM-DD format. Only used if --dest=local.")
+    parser.add_argument(
+        "--end-date",
+        type=lambda x: datetime.strptime(x, "%Y-%m-%d").date(),
+        help="(Optional) End date in YYYY-MM-DD format. Only used if --dest=local.")
+
+    args = parser.parse_args()
+    return args
+
+
+def main():
+    try:
+        args = parse_args()
+        params = get_params()
+        dates = get_dates(args, params)
+
+        data = read_data_from_api(params["api"], dates)
+        if data is None:
+            return None
+
         if args.dest == "bigquery":
-            write_data_to_bigquery(params[args.dest], data)
-        elif args.dest == "slack":
-            write_data_to_slack(params[args.dest], data, dates)
-        elif args.dest == "local":
+            write_data_to_bigquery(params, data)
+        else:
             write_data_to_excel(data)
+
+    except Exception as e:
+        if params["environment"] == "prod":
+            text = get_slack_message_text(e)
+            send_message_to_slack(text, params["slack_channel_id"], params["slack_token"])
+        raise e
+
+
+if __name__ == "__main__":
+    main()
