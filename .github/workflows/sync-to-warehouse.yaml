@@ -1,4 +1,4 @@
-name: Sync Data to BigQuery
+name: Sync Data to Warehouse
 
 on:
   schedule:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  sync-to-bigquery:
+  sync-to-warehouse:
     runs-on: ubuntu-latest
     env:
       API_PARAMS: ${{ secrets.API_PARAMS }}

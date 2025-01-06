@@ -1,9 +1,8 @@
 service_account_key: service_account_key.json
+project: noorahealth-raw
 environments:
   - name: prod
-    project: noorahealth-raw
     dataset: ccp_andhra_pradesh
   - name: dev
-    project: noorahealth-raw
     dataset: ccp_andhra_pradesh_dev
 slack_channel_id: C080138T9S6
