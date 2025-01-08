@@ -1,4 +1,4 @@
-[![sync-to-bigquery](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/sync-to-warehouse.yaml/badge.svg)](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/sync-to-warehouse.yaml)
+[![sync-to-warehouse](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/sync-to-warehouse.yaml/badge.svg)](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/sync-to-warehouse.yaml)
 
 # Overview
 
