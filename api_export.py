@@ -380,11 +380,11 @@ def get_dates(args, params):
 
 def get_slack_message_text(e):
     text = (
-        f":warning: Sync for CCP Andhra Pradesh failed with the following error:"
+        f":warning: Sync for Andhra Pradesh CCP failed with the following error:"
         f"\n\n`{str(e)}`"
     )
-    if os.getenv("RUN_URL") is not None:
-        run_url = os.getenv("RUN_URL")
+    run_url = os.getenv("RUN_URL")
+    if run_url is not None:
         text += f"\n\nPlease see the GitHub Actions <{run_url}|workflow run log>."
     return text
 
@@ -399,7 +399,7 @@ def send_message_to_slack(text, channel_id, token):
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Extract and load for the CCP Andhra Pradesh API.",
+        description="Extract and load for the Andhra Pradesh CCP API.",
         formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument(
         "--dest",
