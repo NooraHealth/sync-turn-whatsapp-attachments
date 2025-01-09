@@ -1,4 +1,4 @@
-name: Sync Data to Warehouse
+name: Sync Andhra Pradesh CCP
 
 on:
   schedule:
@@ -10,7 +10,7 @@ jobs:
   sync-to-warehouse:
     runs-on: ubuntu-latest
     env:
-      API_PARAMS: ${{ secrets.API_PARAMS }}
+      ANDHRA_PRADESH_CCP: ${{ secrets.ANDHRA_PRADESH_CCP }}
       SERVICE_ACCOUNT_KEY: ${{ secrets.SERVICE_ACCOUNT_KEY }}
       SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -32,4 +32,4 @@ jobs:
         run: uv sync
 
       - name: Run script
-        run: uv run api_export.py --dest bigquery
+        run: uv run sync/andhra_pradesh_ccp.py
