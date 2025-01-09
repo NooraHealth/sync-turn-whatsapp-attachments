@@ -3,7 +3,6 @@ name: Sync Andhra Pradesh CCP
 on:
   schedule:
     - cron: '30 18 * * 0'
-  pull_request:
   workflow_dispatch:
 
 jobs:
