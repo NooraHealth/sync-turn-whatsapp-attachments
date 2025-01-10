@@ -9,7 +9,7 @@ jobs:
   sync-to-warehouse:
     runs-on: ubuntu-latest
     env:
-      ANDHRA_PRADESH_CCP: ${{ secrets.ANDHRA_PRADESH_CCP }}
+      SOURCE_PARAMS: ${{ secrets.ANDHRA_PRADESH_CCP }}
       SERVICE_ACCOUNT_KEY: ${{ secrets.SERVICE_ACCOUNT_KEY }}
       SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

@@ -304,7 +304,7 @@ def main():
         params = utils.get_params(source_name)
         dates = get_dates(args, params)
 
-        data = read_data_from_api(params["source_secrets"], dates)
+        data = read_data_from_api(params["source_params"], dates)
         if data is None:
             return None
 

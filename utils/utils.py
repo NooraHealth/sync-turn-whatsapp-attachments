@@ -20,7 +20,7 @@ def get_params(source_name, params_path="params.yaml"):
     envir = "prod" if github_ref_name == "main" else "dev"
 
     y = [x for x in params["sources"] if x["name"] == source_name][0]
-    params["source"] = y["name"]
+    params["source_name"] = y["name"]
     z = [x for x in y["environments"] if x["name"] == envir][0]
     params["environment"] = z.pop("name")
     del params["sources"]
@@ -33,11 +33,11 @@ def get_params(source_name, params_path="params.yaml"):
         with open(Path("secrets", "slack_token.txt")) as f:
             params["slack_token"] = f.read().strip("\n")
         with open(Path("secrets", f"{source_name}.yaml")) as f:
-            params["source_secrets"] = yaml.safe_load(f)
+            params["source_params"] = yaml.safe_load(f)
     else:
         params[key] = json.loads(os.getenv("SERVICE_ACCOUNT_KEY"))
         params["slack_token"] = os.getenv("SLACK_TOKEN")
-        params["source_secrets"] = yaml.safe_load(os.getenv(source_name.upper()))
+        params["source_params"] = yaml.safe_load(os.getenv("SOURCE_PARAMS"))
 
     params["credentials"] = Credentials.from_service_account_info(params[key])
     del params[key]
