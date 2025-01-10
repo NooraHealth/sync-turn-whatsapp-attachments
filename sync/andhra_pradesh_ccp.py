@@ -1,22 +1,14 @@
 import argparse
 import datetime as dt
 import hashlib
-import io
 import json
-import os
-import oyaml as yaml
 import polars as pl
 import polars.selectors as cs
 import requests
-import slack_sdk
-import uuid
-import warnings
 import xlsxwriter
 from datetime import datetime, timedelta
-from google.cloud import bigquery
-from google.oauth2.service_account import Credentials
 from multiprocessing import Pool
-from pathlib import Path
+from .. import utils
 
 
 def dict_hash(dictionary):
@@ -123,42 +115,6 @@ class Report:
             return data["data"] if data["result"] == "success" else []
 
 
-def get_params(filepath="params.yaml"):
-    github_ref_name = os.getenv("GITHUB_REF_NAME")
-
-    with open(filepath) as f:
-        params = yaml.safe_load(f)
-
-    key = "service_account_key"
-    if github_ref_name is None:
-        with open(Path("secrets", params[key])) as f:
-            params[key] = json.load(f)
-        with open(Path("secrets", "slack_token.txt")) as f:
-            params["slack_token"] = f.read().strip("\n")
-        with open(Path("secrets", "api.yaml")) as f:
-            params["api"] = yaml.safe_load(f)
-    else:
-        params[key] = json.loads(os.getenv("SERVICE_ACCOUNT_KEY"))
-        params["slack_token"] = os.getenv("SLACK_TOKEN")
-        params["api"] = yaml.safe_load(os.getenv("API_PARAMS"))
-
-    params["credentials"] = Credentials.from_service_account_info(params[key])
-    del params[key]
-
-    envir = "prod" if github_ref_name == "main" else "dev"
-    y = [x for x in params["environments"] if x["name"] == envir][0]
-    y["environment"] = y.pop("name")
-    del params["environments"]
-    params.update(y)
-
-    params.update({"github_ref_name": github_ref_name})
-    return params
-
-
-def json_dumps_list(x):
-    return json.dumps(x.to_list())
-
-
 def read_data_from_api(params, dates):
     report = Report(params["url"], params["username"], params["password"])
     report.login()
@@ -227,7 +183,7 @@ def read_data_from_api(params, dates):
         .with_columns(pl.col("date_of_session").str.to_date("%d-%m-%Y"))
         .with_columns(
             cs.by_name("data1", require_all=False)
-            .map_elements(json_dumps_list, return_dtype=pl.String))
+            .map_elements(utils.json_dumps_list, return_dtype=pl.String))
     )
 
     nurse_trainings_df = pl.from_dicts(nurse_trainings)
@@ -240,7 +196,7 @@ def read_data_from_api(params, dates):
             cs.by_name("sessiondateandtime", require_all=False).str.to_date("%d-%m-%Y"))
         .with_columns(
             cs.by_name(struct_cols, require_all=False)
-            .map_elements(json_dumps_list, return_dtype=pl.String))
+            .map_elements(utils.json_dumps_list, return_dtype=pl.String))
     )
 
     data_frames = {
@@ -251,79 +207,20 @@ def read_data_from_api(params, dates):
     return data_frames
 
 
-def get_bigquery_schema(df):
-    n = "NUMERIC"
-    i = "INT64"
-    s = "STRING"
-    dtype_mappings = {
-        pl.Decimal: n, pl.Float32: n, pl.Float64: n,
-        pl.Int8: i, pl.Int16: i, pl.Int32: i, pl.Int64: i,
-        pl.UInt8: i, pl.UInt16: i, pl.UInt32: i, pl.UInt64: i,
-        pl.String: s, pl.Categorical: s, pl.Enum: s, pl.Utf8: s,
-        pl.Binary: "BOOLEAN", pl.Boolean: "BOOLEAN", pl.Date: "DATE",
-        pl.Datetime("us", time_zone="UTC"): "TIMESTAMP",
-        pl.Datetime("us", time_zone=None): "DATETIME",  # won't work for other time zones
-        pl.Time: "TIME", pl.Duration: "INTERVAL"
-    }
-    schema = []
-    for j in range(df.shape[1]):
-        dtype = dtype_mappings[df.dtypes[j]]
-        schema.append(bigquery.SchemaField(df.columns[j], dtype))
-    return schema
-
-
-def write_bigquery(df, table_name, params, write_disposition="WRITE_EMPTY"):
-    schema = get_bigquery_schema(df)
-    client = bigquery.Client(credentials=params["credentials"])
-    with io.BytesIO() as stream:
-        df.write_parquet(stream)
-        stream.seek(0)
-        job = client.load_table_from_file(
-            stream, destination=f"{params['dataset']}.{table_name}",
-            project=params["project"],
-            job_config=bigquery.LoadJobConfig(
-                source_format=bigquery.SourceFormat.PARQUET,
-                schema=schema, write_disposition=write_disposition),
-        )
-    job.result()
-    return df.shape[0]
-
-
-def read_bigquery(query, credentials):
-    with warnings.catch_warnings(action="ignore"):
-        rows = bigquery.Client(credentials=credentials).query(query).result().to_arrow()
-        df = pl.from_arrow(rows)
-    return df
-
-
-def read_bigquery_exists(table_name, params):
-    q = f"select * from `{params['dataset']}.__TABLES__` where table_id = '{table_name}'"
-    df = read_bigquery(q, params["credentials"])
-    return df.shape[0] > 0
-
-
 def write_data_to_excel(data_frames, filepath="data.xlsx"):
     with xlsxwriter.Workbook(filepath) as wb:
         for key, df in sorted(data_frames.items()):
             df.write_excel(workbook=wb, worksheet=key)
 
 
-def add_extracted_columns(df, extracted_at=None):
-    if extracted_at is not None:
-        df = df.with_columns(_extracted_at=pl.lit(extracted_at))
-    uuids = [str(uuid.uuid4()) for _ in range(df.shape[0])]
-    df = df.with_columns(pl.Series("_extracted_uuid", uuids))
-    return df
-
-
 def write_data_to_bigquery(params, data_frames):
     extracted_at = datetime.now(dt.timezone.utc).replace(microsecond=0)
     for key in data_frames:
-        data_frames[key] = add_extracted_columns(data_frames[key], extracted_at)
+        data_frames[key] = utils.add_extracted_columns(data_frames[key], extracted_at)
 
-    if read_bigquery_exists("nurses", params):
+    if utils.read_bigquery_exists("nurses", params):
         # keep the latest data for each username
-        nurses_old = read_bigquery(
+        nurses_old = utils.read_bigquery(
             f"select * from `{params['dataset']}.nurses`", params["credentials"])
         nurses_concat = pl.concat(
             [nurses_old, data_frames["nurses"]], how="diagonal_relaxed")
@@ -336,7 +233,7 @@ def write_data_to_bigquery(params, data_frames):
     }
 
     for table_name in sorted(data_frames.keys()):
-        write_bigquery(
+        utils.write_bigquery(
             data_frames[table_name], table_name, params, write_dispositions[table_name])
 
 
@@ -347,9 +244,9 @@ def get_dates_from_bigquery(
     col_name = "date_of_session"
     dates = dict(start=default_start_date, end=datetime.now().date() - timedelta(days=1))
 
-    if read_bigquery_exists(table_name, params):
+    if utils.read_bigquery_exists(table_name, params):
         q = f"select max({col_name}) as max_date from `{params['dataset']}.{table_name}`"
-        df = read_bigquery(q, params["credentials"])
+        df = utils.read_bigquery(q, params["credentials"])
         if df.item() is not None:
             dates["start"] = df.item() - timedelta(days=overlap - 1)
 
@@ -378,25 +275,6 @@ def get_dates(args, params):
     return dates
 
 
-def get_slack_message_text(e):
-    text = (
-        f":warning: Sync for Andhra Pradesh CCP failed with the following error:"
-        f"\n\n`{str(e)}`"
-    )
-    run_url = os.getenv("RUN_URL")
-    if run_url is not None:
-        text += f"\n\nPlease see the GitHub Actions <{run_url}|workflow run log>."
-    return text
-
-
-def send_message_to_slack(text, channel_id, token):
-    client = slack_sdk.WebClient(token=token)
-    try:
-        client.chat_postMessage(channel=channel_id, text=text)
-    except slack_sdk.SlackApiError as e:
-        assert e.response["error"]
-
-
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Extract and load for the Andhra Pradesh CCP API.",
@@ -404,7 +282,7 @@ def parse_args():
     parser.add_argument(
         "--dest",
         choices=["bigquery", "local"],
-        default="local",
+        default="bigquery",
         help="Destination to write the data (bigquery or local).")
     parser.add_argument(
         "--start-date",
@@ -421,11 +299,12 @@ def parse_args():
 
 def main():
     try:
+        source_name = "andhra_pradesh_ccp"
         args = parse_args()
-        params = get_params()
+        params = utils.get_params(source_name)
         dates = get_dates(args, params)
 
-        data = read_data_from_api(params["api"], dates)
+        data = read_data_from_api(params["source_params"], dates)
         if data is None:
             return None
 
@@ -436,8 +315,9 @@ def main():
 
     except Exception as e:
         if params["environment"] == "prod":
-            text = get_slack_message_text(e)
-            send_message_to_slack(text, params["slack_channel_id"], params["slack_token"])
+            text = utils.get_slack_message_text(e, source_name)
+            utils.send_message_to_slack(
+                text, params["slack_channel_id"], params["slack_token"])
         raise e
 
 

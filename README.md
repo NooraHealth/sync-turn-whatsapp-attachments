@@ -1,4 +1,4 @@
-[![sync-to-warehouse](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/sync-to-warehouse.yaml/badge.svg)](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/sync-to-warehouse.yaml)
+[![sync_andhra_pradesh_ccp](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/sync_andhra_pradesh_ccp.yaml/badge.svg)](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/sync_andhra_pradesh_ccp.yaml)
 
 # Overview
 
