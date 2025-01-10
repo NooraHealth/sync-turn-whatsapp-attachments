@@ -8,7 +8,7 @@ import requests
 import xlsxwriter
 from datetime import datetime, timedelta
 from multiprocessing import Pool
-from .. import utils
+from . import utils
 
 
 def dict_hash(dictionary):
