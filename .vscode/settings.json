@@ -1,0 +1,8 @@
+{
+  "editor.tabSize": 2,
+  "flake8.args": [
+    "--max-line-length=90",
+    "--indent-size=2",
+    "--ignore=E251",
+  ],
+}

@@ -1,5 +1,7 @@
 [![sync_andhra_pradesh_ccp](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/sync_andhra_pradesh_ccp.yaml/badge.svg)](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/sync_andhra_pradesh_ccp.yaml)
 
+[![sync_andhra_pradesh_mlhp](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/sync_andhra_pradesh_mlhp.yaml/badge.svg)](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/sync_andhra_pradesh_mlhp.yaml)
+
 # Overview
 
 This repository contains GitHub Actions workflows that fetch data from the Andhra Pradesh CCP API and then sync the data to the BigQuery data warehouse.
