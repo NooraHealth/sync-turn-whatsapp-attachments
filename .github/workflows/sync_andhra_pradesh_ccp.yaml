@@ -31,4 +31,4 @@ jobs:
         run: uv sync
 
       - name: Run script
-        run: uv run sync/andhra_pradesh_ccp.py
+        run: uv run src/andhra_pradesh_ccp.py
