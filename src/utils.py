@@ -11,13 +11,14 @@ from google.oauth2.service_account import Credentials
 from pathlib import Path
 
 
-def get_params(source_name, params_path = 'params.yaml'):
+def get_params(source_name, params_path = 'params.yaml', envir = None):
   with open(params_path) as f:
     params = yaml.safe_load(f)
 
   github_ref_name = os.getenv('GITHUB_REF_NAME')
   params.update({'github_ref_name': github_ref_name})
-  envir = 'prod' if github_ref_name == 'main' else 'dev'
+  if envir is None:
+    envir = 'prod' if github_ref_name == 'main' else 'dev'
 
   y = [x for x in params['sources'] if x['name'] == source_name][0]
   params['source_name'] = y['name']
@@ -80,7 +81,7 @@ def get_bigquery_schema(df):
     pl.Binary: 'BOOLEAN', pl.Boolean: 'BOOLEAN', pl.Date: 'DATE',
     pl.Datetime('us', time_zone = 'UTC'): 'TIMESTAMP',
     pl.Datetime('us', time_zone = None): 'DATETIME',  # won't work for other time zones
-    pl.Time: 'TIME', pl.Duration: 'INTERVAL'
+    pl.Time: 'TIME', pl.Duration: 'INTERVAL', pl.Null: 'STRING'
   }
   schema = []
   for j in range(df.shape[1]):
