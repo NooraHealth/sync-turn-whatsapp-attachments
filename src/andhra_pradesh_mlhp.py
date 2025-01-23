@@ -1,8 +1,8 @@
 import argparse
+import concurrent.futures
 import datetime as dt
 import functools
 import github
-import multiprocessing as mp
 import os
 import polars as pl
 import polars.selectors as cs
@@ -67,13 +67,8 @@ def get_sessions_from_api(fromdate, todate, username, api_key, api_url):
   return df
 
 
-def sync_sessions_by_user(
-    user_dict, params, extracted_at, stop_at = None, overlap_days = 30):
+def sync_sessions_by_user(user_dict, params, extracted_at, overlap_days = 30):
   # TODO: how far back can sessions be created, edited, or deleted? affects overlap_days
-
-  if stop_at is not None and stop_at <= dt.datetime.now():
-    return None
-
   q_pre = f"update `{params['dataset']}.{USERS_TABLE_NAME}` set"
   q_suf = f"where username = '{user_dict['username']}'"
 
@@ -119,11 +114,6 @@ def sync_data_to_warehouse(params, max_duration_mins, trigger_mode):
   if trigger_mode != 'continuing' or extracted_at is None:
     extracted_at = dt.datetime.now(dt.timezone.utc).replace(microsecond = 0)
 
-  if max_duration_mins > 0:
-    stop_at = dt.datetime.now() + dt.timedelta(minutes = max_duration_mins)
-  else:
-    stop_at = None
-
   q = (
     f"select username, max_todate, _extracted_at "
     f"from `{params['dataset']}.{USERS_TABLE_NAME}`"
@@ -138,21 +128,26 @@ def sync_data_to_warehouse(params, max_duration_mins, trigger_mode):
   users = users.sort([col_name, 'username'])
 
   sync_sessions_by_user_p = functools.partial(
-    sync_sessions_by_user, params = params, extracted_at = extracted_at,
-    stop_at = stop_at)
+    sync_sessions_by_user, params = params, extracted_at = extracted_at)
 
-  with mp.get_context('spawn').Pool(2) as p:  # api is easily overwhelmed
-    results = list(tqdm.tqdm(
-      p.imap_unordered(sync_sessions_by_user_p, users.rows(named = True)),
-      total = users.shape[0]))
-  # results = map(sync_sessions_by_user_p, tqdm.tqdm(users.rows(named = True)))
+  if max_duration_mins > 0:
+    timeout = max_duration_mins * 60
+  else:
+    timeout = None
 
-  if (None in results
-      and trigger_mode in ['oneormore', 'continuing']  # noqa: W503
-      and params['github_ref_name'] is not None):  # noqa: W503
-    trigger_workflow(max_duration_mins)
+  try:  # api is easily overwhelmed
+    with concurrent.futures.ThreadPoolExecutor(2) as executor:
+      list(tqdm.tqdm(
+        executor.map(
+          sync_sessions_by_user_p, users.rows(named = True), timeout = timeout),
+        total = users.shape[0]))
 
-  return results
+  except TimeoutError:
+    if (trigger_mode in ('oneormore', 'continuing')
+        and params['github_ref_name'] is not None):  # noqa: W503
+      trigger_workflow(max_duration_mins)
+
+  return True
 
 
 def trigger_workflow(max_duration_mins, trigger_mode = 'continuing'):
@@ -163,24 +158,6 @@ def trigger_workflow(max_duration_mins, trigger_mode = 'continuing'):
   workflow = repo.get_workflow(workflow_name)
   inputs = {'max_duration_mins': str(max_duration_mins), 'trigger_mode': trigger_mode}
   response = workflow.create_dispatch(ref = os.getenv('GITHUB_REF_NAME'), inputs = inputs)
-  # pattern = '(?<=\\.github/workflows/).+\\.ya?ml'
-  # workflow_id = re.search(pattern, os.getenv('GITHUB_WORKFLOW_REF')).group(0)
-  # url = (
-  #   f"api.github.com/repos/{os.getenv('GITHUB_REPOSITORY')}/"
-  #   f"actions/workflows/{workflow_id}/dispatches"
-  # )
-  # headers = {
-  #   'Accept': 'application/vnd.github+json',
-  #   # 'Authorization': 'Bearer ' + os.getenv('GITHUB_TOKEN'),
-  #   # 'Authorization': 'Bearer ' + os.getenv('GH_PAT'),
-  #   'X-GitHub-Api-Version': '2022-11-28'
-  # }
-  # payload = {
-  #   'ref': os.getenv('GITHUB_REF_NAME'),
-  #   'inputs': {'max_duration_mins': str(max_duration_mins), 'trigger_mode': trigger_mode}
-  # }
-  # print(payload)
-  # response = requests.post(url, headers = headers, json = payload)
   return response
 
 
