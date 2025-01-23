@@ -1,4 +1,5 @@
 import argparse
+import concurrent.futures
 import datetime as dt
 import hashlib
 import json
@@ -7,19 +8,15 @@ import polars.selectors as cs
 import requests
 import xlsxwriter
 from datetime import datetime, timedelta
-from multiprocessing import Pool
 from . import utils
 
 
 def dict_hash(dictionary):
   dictionary_json = json.dumps(dictionary, sort_keys = True)
-
   # Create an MD5 hash object
   hasher = hashlib.md5()
-
   # Encode the JSON string and update the hasher
   hasher.update(dictionary_json.encode('utf-8'))
-
   # Return the hexadecimal representation of the hash
   return hasher.hexdigest()
 
@@ -116,23 +113,17 @@ class Report:
 def read_data_from_api(params, dates):
   report = Report(params['url'], params['username'], params['password'])
   report.login()
+  iter_dates = [*dt_iterate(dates['start'], dates['end'], timedelta(days = 1))]
 
-  with Pool() as p:
-    patient_trainings_nested = p.map(
-      report.get_patient_training,
-      [*dt_iterate(dates['start'], dates['end'], timedelta(days = 1))],
-    )
+  # with mp.get_context('spawn').Pool() as p:
+  with concurrent.futures.ThreadPoolExecutor() as executor:
+    patient_trainings_nested = executor.map(report.get_patient_training, iter_dates)
   patient_trainings = [x2 for x1 in patient_trainings_nested for x2 in x1]
 
-  with Pool() as p:
-    nurse_trainings_nested = p.map(
-      report.get_nurse_training,
-      [*dt_iterate(dates['start'], dates['end'], timedelta(days = 1))],
-    )
-  # nurse_trainings_nested = map(
-  #   report.get_nurse_training,
-  #   [*dt_iterate(dates['start'], dates['end'], timedelta(days = 1))],
-  # )
+  # with mp.get_context('spawn').Pool() as p:
+  with concurrent.futures.ThreadPoolExecutor() as executor:
+    nurse_trainings_nested = executor.map(report.get_nurse_training, iter_dates)
+  # nurse_trainings_nested = map(report.get_nurse_training, iter_dates)
 
   nurse_trainings = [x2 for x1 in nurse_trainings_nested for x2 in x1]
 
@@ -162,8 +153,9 @@ def read_data_from_api(params, dates):
 
   all_phones = list(set(phones_in_patient_trainings + phones_in_nurse_trainings))
 
-  with Pool() as p:
-    nurse_details_nested = p.map(report.get_nurse_details, all_phones)
+  # with mp.get_context('spawn').Pool() as p:
+  with concurrent.futures.ThreadPoolExecutor() as executor:
+    nurse_details_nested = executor.map(report.get_nurse_details, all_phones)
   # nurse_details_nested = map(report.get_nurse_details, all_phones)
   nurses = [x2 for x1 in nurse_details_nested for x2 in x1]
 

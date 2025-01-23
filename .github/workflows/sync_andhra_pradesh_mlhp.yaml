@@ -12,6 +12,7 @@ on:
           - 5
           - 20
           - 60
+          - 240
       trigger_mode:
         required: false
         type: choice
@@ -30,7 +31,7 @@ jobs:
       SERVICE_ACCOUNT_KEY: ${{ secrets.SERVICE_ACCOUNT_KEY }}
       SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-      TIMEOUT_MINS: ${{ inputs.timeout_mins || (github.event_name == 'pull_request' && '5' || '60') }}
+      TIMEOUT_MINS: ${{ inputs.timeout_mins || (github.event_name == 'pull_request' && '5' || '240') }}
       TRIGGER_MODE: ${{ inputs.trigger_mode || (github.event_name == 'pull_request' && 'oneanddone' || 'oneormore') }}
 
     steps:

@@ -28,7 +28,7 @@ def get_chunk_dates(fromdate, todate, chunk_days):
 
 
 def get_sessions_from_api(fromdate, todate, username, api_key, api_url):
-  try_chunk_days = [180, 60, 21, 7]
+  try_chunk_days = [180, 60, 21, 7, 2]
   base_headers = {'username': username, 'ApiKey': api_key}
   no_data = {'status': 'Failed', 'msg': 'No Data Found'}
 
@@ -54,13 +54,13 @@ def get_sessions_from_api(fromdate, todate, username, api_key, api_url):
   if len(data) == 0:
     return pl.DataFrame()
 
-  # TODO: decide whether to cast types
-  int_cols = ['id']  # , 'patients_trained', 'member_trained']
+  # int_cols = ['id', 'patients_trained', 'member_trained']
   df = (
     pl.from_dicts(data)
-    .with_columns(cs.by_name(int_cols, require_all = False).cast(pl.Int64))
-    .with_columns(pl.col('session_date').str.to_date('%d-%m-%Y'))
+    # .with_columns(cs.by_name(int_cols, require_all = False).cast(pl.Int64))
     .with_columns(
+      pl.col('id').cast(pl.Int64),
+      pl.col('session_date').str.to_date('%d-%m-%Y'),
       cs.by_name('subdata', require_all = False)
       .map_elements(utils.json_dumps_list, return_dtype = pl.String))
   )
@@ -68,7 +68,8 @@ def get_sessions_from_api(fromdate, todate, username, api_key, api_url):
 
 
 def sync_sessions_by_user(user_dict, params, extracted_at, overlap_days = 30):
-  # TODO: how far back can sessions be created, edited, or deleted? affects overlap_days
+  # TODO: how far back can sessions be created? affects overlap_days
+  # per Hassan, previously submitted sessions cannot be edited or deleted
   q_pre = f"update `{params['dataset']}.{USERS_TABLE_NAME}` set"
   q_suf = f"where username = '{user_dict['username']}'"
 
