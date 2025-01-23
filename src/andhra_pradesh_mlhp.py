@@ -1,6 +1,7 @@
 import argparse
 import datetime as dt
 import functools
+import github
 import multiprocessing as mp
 import os
 import polars as pl
@@ -70,7 +71,7 @@ def sync_sessions_by_user(
     user_dict, params, extracted_at, stop_at = None, overlap_days = 30):
   # TODO: how far back can sessions be created, edited, or deleted? affects overlap_days
 
-  if stop_at is not None and stop_at <= dt.datetime.now(dt.timezone.utc):
+  if stop_at is not None and stop_at <= dt.datetime.now():
     return None
 
   q_pre = f"update `{params['dataset']}.{USERS_TABLE_NAME}` set"
@@ -119,7 +120,7 @@ def sync_data_to_warehouse(params, max_duration_mins, trigger_mode):
     extracted_at = dt.datetime.now(dt.timezone.utc).replace(microsecond = 0)
 
   if max_duration_mins > 0:
-    stop_at = extracted_at + dt.timedelta(minutes = max_duration_mins)
+    stop_at = dt.datetime.now() + dt.timedelta(minutes = max_duration_mins)
   else:
     stop_at = None
 
@@ -155,24 +156,31 @@ def sync_data_to_warehouse(params, max_duration_mins, trigger_mode):
 
 
 def trigger_workflow(max_duration_mins, trigger_mode = 'continuing'):
+  g = github.Github(login_or_token = os.getenv('GH_PAT'))
+  repo = g.get_repo(os.getenv('GITHUB_REPOSITORY'))
   pattern = '(?<=\\.github/workflows/).+\\.ya?ml'
-  workflow_id = re.search(pattern, os.getenv('GITHUB_WORKFLOW_REF')).group(0)
-  url = (
-    f"https://api.github.com/repos/{os.getenv('GITHUB_REPOSITORY')}/"
-    f"actions/workflows/{workflow_id}/dispatches"
-  )
-  headers = {
-    'Accept': 'application/vnd.github+json',
-    # 'Authorization': 'Bearer ' + os.getenv('GITHUB_TOKEN'),
-    'Authorization': 'Bearer ' + os.getenv('GH_PAT'),
-    'X-GitHub-Api-Version': '2022-11-28'
-  }
-  payload = {
-    'ref': os.getenv('GITHUB_REF_NAME'),
-    'inputs': {'max_duration_mins': max_duration_mins, 'trigger_mode': trigger_mode}
-  }
-  print(payload)
-  response = requests.post(url, headers = headers, json = payload)
+  workflow_name = re.search(pattern, os.getenv('GITHUB_WORKFLOW_REF')).group(0)
+  workflow = repo.get_workflow(workflow_name)
+  inputs = {'max_duration_mins': str(max_duration_mins), 'trigger_mode': trigger_mode}
+  response = workflow.create_dispatch(ref = os.getenv('GITHUB_REF_NAME'), inputs = inputs)
+  # pattern = '(?<=\\.github/workflows/).+\\.ya?ml'
+  # workflow_id = re.search(pattern, os.getenv('GITHUB_WORKFLOW_REF')).group(0)
+  # url = (
+  #   f"api.github.com/repos/{os.getenv('GITHUB_REPOSITORY')}/"
+  #   f"actions/workflows/{workflow_id}/dispatches"
+  # )
+  # headers = {
+  #   'Accept': 'application/vnd.github+json',
+  #   # 'Authorization': 'Bearer ' + os.getenv('GITHUB_TOKEN'),
+  #   # 'Authorization': 'Bearer ' + os.getenv('GH_PAT'),
+  #   'X-GitHub-Api-Version': '2022-11-28'
+  # }
+  # payload = {
+  #   'ref': os.getenv('GITHUB_REF_NAME'),
+  #   'inputs': {'max_duration_mins': str(max_duration_mins), 'trigger_mode': trigger_mode}
+  # }
+  # print(payload)
+  # response = requests.post(url, headers = headers, json = payload)
   return response
 
 
