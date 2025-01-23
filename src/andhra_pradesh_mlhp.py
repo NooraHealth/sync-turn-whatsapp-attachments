@@ -17,6 +17,14 @@ USERS_TABLE_NAME = 'users'
 DEFAULT_EXTRACTED_AT = dt.datetime(2023, 4, 1).replace(tzinfo = dt.timezone.utc)
 
 
+def get_try_chunk_days(range_days, try_chunk_days = (180, 60, 21, 7, 2, 1)):
+  idx = next(
+    (i for i in range(len(try_chunk_days)) if try_chunk_days[i] < range_days),
+    len(try_chunk_days))
+  idx = max(0, idx - 1)
+  return try_chunk_days[idx:]
+
+
 def get_chunk_dates(fromdate, todate, chunk_days):
   chunk_dates = pl.date_range(
     fromdate, todate, f'{chunk_days}d', closed = 'left', eager = True).to_list()
@@ -28,7 +36,7 @@ def get_chunk_dates(fromdate, todate, chunk_days):
 
 
 def get_sessions_from_api(fromdate, todate, username, api_key, api_url):
-  try_chunk_days = [180, 60, 21, 7, 2]
+  try_chunk_days = get_try_chunk_days((todate - fromdate).days)
   base_headers = {'username': username, 'ApiKey': api_key}
   no_data = {'status': 'Failed', 'msg': 'No Data Found'}
 
@@ -45,7 +53,7 @@ def get_sessions_from_api(fromdate, todate, username, api_key, api_url):
         response.raise_for_status()
         if response.json() != no_data and 'data' in response.json().keys():
           data.extend(response.json()['data'])
-      break
+      break  # if we've made it this far, we're good to go
 
     except Exception as e:
       if chunk_days == try_chunk_days[-1]:
