@@ -112,7 +112,7 @@ def sync_sessions_by_user(user_dict, params, extracted_at, overlap_days = 30):
   return val
 
 
-def sync_data_to_warehouse(params, timeout_mins, trigger_mode):
+def sync_data_to_warehouse(params, timeout_mins, trigger_mode, max_workers = 4):
   col_name = '_extracted_at'
 
   if trigger_mode == 'continuing':
@@ -139,13 +139,10 @@ def sync_data_to_warehouse(params, timeout_mins, trigger_mode):
   sync_sessions_by_user_p = functools.partial(
     sync_sessions_by_user, params = params, extracted_at = extracted_at)
 
-  if timeout_mins > 0:
-    timeout = timeout_mins * 60
-  else:
-    timeout = None
+  timeout = timeout_mins * 60 if timeout_mins > 0 else None
 
-  try:  # two workers because api is easily overwhelmed
-    with concurrent.futures.ThreadPoolExecutor(2) as executor:
+  try:  # api is easily overwhelmed
+    with concurrent.futures.ThreadPoolExecutor(max_workers) as executor:
       list(tqdm.tqdm(
         executor.map(
           sync_sessions_by_user_p, users.rows(named = True), timeout = timeout),
@@ -208,7 +205,7 @@ def upload_users(params, data_dir = 'data'):
 def parse_args():
   parser = argparse.ArgumentParser()
   parser.add_argument('--params-path', default = 'params.yaml', type = Path)
-  parser.add_argument('--timeout-mins', default = 60, type = int)
+  parser.add_argument('--timeout-mins', default = 5, type = int)
   parser.add_argument(
     '--trigger-mode', default = 'oneanddone',
     choices = ['oneanddone', 'oneormore', 'continuing'])
