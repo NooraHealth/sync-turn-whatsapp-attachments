@@ -5,7 +5,7 @@ on:
     - cron: '30 18 * * 3'
   workflow_dispatch:
     inputs:
-      max_duration_mins:
+      timeout_mins:
         required: false
         type: choice
         options:
@@ -30,7 +30,7 @@ jobs:
       SERVICE_ACCOUNT_KEY: ${{ secrets.SERVICE_ACCOUNT_KEY }}
       SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-      MAX_DURATION_MINS: ${{ inputs.max_duration_mins || (github.event_name == 'pull_request' && '5' || '60') }}
+      TIMEOUT_MINS: ${{ inputs.timeout_mins || (github.event_name == 'pull_request' && '5' || '60') }}
       TRIGGER_MODE: ${{ inputs.trigger_mode || (github.event_name == 'pull_request' && 'oneanddone' || 'oneormore') }}
 
     steps:
@@ -50,4 +50,4 @@ jobs:
         run: uv sync
 
       - name: Run script
-        run: uv run -m src.andhra_pradesh_mlhp --max-duration-mins $MAX_DURATION_MINS --trigger-mode $TRIGGER_MODE
+        run: uv run -m src.andhra_pradesh_mlhp --timeout-mins $TIMEOUT_MINS --trigger-mode $TRIGGER_MODE

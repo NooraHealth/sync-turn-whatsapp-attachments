@@ -103,7 +103,7 @@ def sync_sessions_by_user(user_dict, params, extracted_at, overlap_days = 30):
   return val
 
 
-def sync_data_to_warehouse(params, max_duration_mins, trigger_mode):
+def sync_data_to_warehouse(params, timeout_mins, trigger_mode):
   col_name = '_extracted_at'
 
   if trigger_mode == 'continuing':
@@ -130,12 +130,12 @@ def sync_data_to_warehouse(params, max_duration_mins, trigger_mode):
   sync_sessions_by_user_p = functools.partial(
     sync_sessions_by_user, params = params, extracted_at = extracted_at)
 
-  if max_duration_mins > 0:
-    timeout = max_duration_mins * 60
+  if timeout_mins > 0:
+    timeout = timeout_mins * 60
   else:
     timeout = None
 
-  try:  # api is easily overwhelmed
+  try:  # two workers because api is easily overwhelmed
     with concurrent.futures.ThreadPoolExecutor(2) as executor:
       list(tqdm.tqdm(
         executor.map(
@@ -145,18 +145,18 @@ def sync_data_to_warehouse(params, max_duration_mins, trigger_mode):
   except TimeoutError:
     if (trigger_mode in ('oneormore', 'continuing')
         and params['github_ref_name'] is not None):  # noqa: W503
-      trigger_workflow(max_duration_mins)
+      trigger_workflow(timeout_mins)
 
   return True
 
 
-def trigger_workflow(max_duration_mins, trigger_mode = 'continuing'):
+def trigger_workflow(timeout_mins, trigger_mode = 'continuing'):
   g = github.Github(login_or_token = os.getenv('GH_PAT'))
   repo = g.get_repo(os.getenv('GITHUB_REPOSITORY'))
   pattern = '(?<=\\.github/workflows/).+\\.ya?ml'
   workflow_name = re.search(pattern, os.getenv('GITHUB_WORKFLOW_REF')).group(0)
   workflow = repo.get_workflow(workflow_name)
-  inputs = {'max_duration_mins': str(max_duration_mins), 'trigger_mode': trigger_mode}
+  inputs = {'timeout_mins': str(timeout_mins), 'trigger_mode': trigger_mode}
   response = workflow.create_dispatch(ref = os.getenv('GITHUB_REF_NAME'), inputs = inputs)
   return response
 
@@ -199,7 +199,7 @@ def upload_users(params, data_dir = 'data'):
 def parse_args():
   parser = argparse.ArgumentParser()
   parser.add_argument('--params-path', default = 'params.yaml', type = Path)
-  parser.add_argument('--max-duration-mins', default = 60, type = int)
+  parser.add_argument('--timeout-mins', default = 60, type = int)
   parser.add_argument(
     '--trigger-mode', default = 'oneanddone',
     choices = ['oneanddone', 'oneormore', 'continuing'])
@@ -212,7 +212,7 @@ def main():
     source_name = 'andhra_pradesh_mlhp'
     args = parse_args()
     params = utils.get_params(source_name, args.params_path)
-    sync_data_to_warehouse(params, args.max_duration_mins, args.trigger_mode)
+    sync_data_to_warehouse(params, args.timeout_mins, args.trigger_mode)
 
   except Exception as e:
     if params['environment'] == 'prod':
