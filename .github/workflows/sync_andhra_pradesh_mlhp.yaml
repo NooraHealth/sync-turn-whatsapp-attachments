@@ -25,6 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_PAT: ${{ secrets.GH_PAT }}
       SOURCE_PARAMS: ${{ secrets.ANDHRA_PRADESH_MLHP }}
       SERVICE_ACCOUNT_KEY: ${{ secrets.SERVICE_ACCOUNT_KEY }}
       SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}

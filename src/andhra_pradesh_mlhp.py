@@ -163,7 +163,8 @@ def trigger_workflow(max_duration_mins, trigger_mode = 'continuing'):
   )
   headers = {
     'Accept': 'application/vnd.github+json',
-    'Authorization': 'Bearer ' + os.getenv('GITHUB_TOKEN'),
+    # 'Authorization': 'Bearer ' + os.getenv('GITHUB_TOKEN'),
+    'Authorization': 'Bearer ' + os.getenv('GH_PAT'),
     'X-GitHub-Api-Version': '2022-11-28'
   }
   payload = {
