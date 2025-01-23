@@ -1,0 +1,52 @@
+name: Sync Andhra Pradesh MLHP
+
+on:
+  schedule:
+    - cron: '30 18 * * 3'
+  workflow_dispatch:
+    inputs:
+      trigger_mode:
+        required: false
+        type: choice
+        options:
+          - oneanddone
+          - oneormore
+          - continuing
+      max_duration_mins:
+        required: false
+        type: choice
+        options:
+          - 5
+          - 20
+          - 60
+
+jobs:
+  sync-to-warehouse:
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      SOURCE_PARAMS: ${{ secrets.ANDHRA_PRADESH_MLHP }}
+      SERVICE_ACCOUNT_KEY: ${{ secrets.SERVICE_ACCOUNT_KEY }}
+      SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      TRIGGER_MODE: ${{ inputs.trigger_mode || (github.event_name == 'pull_request' && 'oneanddone' || 'oneormore') }}
+      MAX_DURATION_MINS: ${{ inputs.max_duration_mins || (github.event_name == 'pull_request' && '5' || '60') }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: '0.5.4'
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Install the project
+        run: uv sync
+
+      - name: Run script
+        run: uv run -m src.andhra_pradesh_mlhp --trigger-mode $TRIGGER_MODE --max-duration-mins $MAX_DURATION_MINS

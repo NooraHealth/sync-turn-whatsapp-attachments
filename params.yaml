@@ -14,9 +14,3 @@ sources:
         dataset: andhra_pradesh_mlhp
       - name: dev
         dataset: andhra_pradesh_mlhp_dev
-  - name: mamta
-    environments:
-      - name: prod
-        dataset: mamta
-      - name: dev
-        dataset: mamta_dev
