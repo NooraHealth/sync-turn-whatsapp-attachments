@@ -1,13 +1,13 @@
 import argparse
 import datetime as dt
 import functools
+import multiprocessing as mp
 import os
 import polars as pl
 import polars.selectors as cs
 import re
 import requests
 import tqdm
-from multiprocessing import Pool
 from pathlib import Path
 from . import utils
 
@@ -140,7 +140,7 @@ def sync_data_to_warehouse(params, trigger_mode, max_duration_mins):
     sync_sessions_by_user, params = params, extracted_at = extracted_at,
     stop_at = stop_at)
 
-  with Pool(2) as p:  # api is easily overwhelmed
+  with mp.get_context('spawn').Pool(2) as p:  # api is easily overwhelmed
     results = list(tqdm.tqdm(
       p.imap_unordered(sync_sessions_by_user_p, users.rows(named = True)),
       total = users.shape[0]))
