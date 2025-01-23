@@ -4,9 +4,9 @@
 
 # Overview
 
-This repository contains GitHub Actions workflows that fetch data from the Andhra Pradesh CCP API and then sync the data to the BigQuery data warehouse.
+This repository contains GitHub Actions workflows that fetch data from the Andhra Pradesh CCP API and the Andhra Pradesh MLHP API and sync the data to the BigQuery data warehouse.
 
-When syncing to BigQuery, the code fetches data starting with 30 days prior to the latest data existing in BigQuery. This redundancy accounts for the possibility that historical data behind the API can change (per Hassan, editing or deleting submissions is not allowed, but new submissions can be back-dated up to 15 days). The data are deduplicated in dbt.
+When syncing to BigQuery, the code fetches data starting with 30 days prior to the latest data existing in BigQuery. This redundancy accounts for the possibility that historical data behind the APIs can change. Per Hassan, editing or deleting submissions is not allowed, but new submissions can be back-dated up to 15 days. The data are deduplicated in dbt.
 
 ## Setup
 
@@ -18,7 +18,7 @@ When syncing to BigQuery, the code fetches data starting with 30 days prior to t
    5. Run python scripts using `uv run path_to_script.py`.
 
 2. Configure the repository secrets locally.
-   1. Create a file secrets/api.yml as follows, replacing `xxx` as appropriate:
+   1. Create a file secrets/andhra_pradesh_ccp.yml as follows, replacing `xxx` as appropriate:
 
       ```yaml
       url: xxx
@@ -26,16 +26,22 @@ When syncing to BigQuery, the code fetches data starting with 30 days prior to t
       password: xxx
       ```
       The `url` is currently a proxy URL, because the actual API is inaccessible within GitHub Actions due to an unresolvable misconfiguration on the API server.
-   2. Create a file secrets/slack.yml as follows, replacing `xxx` as appropriate:
+   2. Create a file secrets/andhra_pradesh_mlhp.yml as follows, replacing `xxx` as appropriate:
 
       ```yaml
-      token: xxx
-      channel_id: xxx
+      url: xxx
+      key: xxx
       ```
-      The `token` is for the bot account used to send the data. To get the `channel_id`, right click to select "View channel details" or "View conversation details", then look at the bottom of the About tab.
-   3. Create a file secrets/service_account_key.json that contains the JSON key for the service account that will connect to BigQuery. The name of the file should match the value of `service_account_key` in params/bigquery.yml.
+   3. Create a file secrets/slack_token.txt that contains the Slack bot token.
+   4. Create a file secrets/service_account_key.json that contains the JSON key for the service account that will connect to BigQuery (airbyte-user).
+   5. Create a file secrets/gh_pat.txt that contains a GitHub fine-grained personal access token that has
+      - access on the NooraHealth organization
+      - repository access to this repo
+      - read and write permissions for Actions
 
 3. Configure the repository secrets on GitHub.
-   1. Copy and paste the contents of secrets/api.yml into a secret named "API_PARAMS".
-   2. Copy and paste the contents of secrets/slack.yml into a secret named "SLACK_PARAMS".
-   3. Copy and paste the contents of secrets/bigquery_service_account_key.json into a secret named "SERVICE_ACCOUNT_KEY".
+   1. Copy and paste the contents of secrets/andhra_pradesh_ccp.yml into a secret named "ANDHRA_PRADESH_CCP".
+   2. Copy and paste the contents of secrets/andhra_pradesh_mlhp.yml into a secret named "ANDHRA_PRADESH_MLHP".
+   3. Copy and paste the contents of secrets/slack_token.txt into a secret named "SLACK_TOKEN".
+   4. Copy and paste the contents of secrets/bigquery_service_account_key.json into a secret named "SERVICE_ACCOUNT_KEY".
+   5. Copy and paste the contents of secrets/gh_pat.txt into a secret named "GH_PAT".

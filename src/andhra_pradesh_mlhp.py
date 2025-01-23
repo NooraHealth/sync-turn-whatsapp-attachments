@@ -1,19 +1,28 @@
 import argparse
+import concurrent.futures
 import datetime as dt
 import functools
+import github
 import os
 import polars as pl
 import polars.selectors as cs
 import re
 import requests
 import tqdm
-from multiprocessing import Pool
 from pathlib import Path
 from . import utils
 
 
 USERS_TABLE_NAME = 'users'
 DEFAULT_EXTRACTED_AT = dt.datetime(2023, 4, 1).replace(tzinfo = dt.timezone.utc)
+
+
+def get_try_chunk_days(range_days, try_chunk_days = (180, 60, 21, 7, 2, 1)):
+  idx = next(
+    (i for i in range(len(try_chunk_days)) if try_chunk_days[i] < range_days),
+    len(try_chunk_days))
+  idx = max(0, idx - 1)
+  return try_chunk_days[idx:]
 
 
 def get_chunk_dates(fromdate, todate, chunk_days):
@@ -27,7 +36,7 @@ def get_chunk_dates(fromdate, todate, chunk_days):
 
 
 def get_sessions_from_api(fromdate, todate, username, api_key, api_url):
-  try_chunk_days = [180, 60, 21, 7]
+  try_chunk_days = get_try_chunk_days((todate - fromdate).days)
   base_headers = {'username': username, 'ApiKey': api_key}
   no_data = {'status': 'Failed', 'msg': 'No Data Found'}
 
@@ -44,7 +53,7 @@ def get_sessions_from_api(fromdate, todate, username, api_key, api_url):
         response.raise_for_status()
         if response.json() != no_data and 'data' in response.json().keys():
           data.extend(response.json()['data'])
-      break
+      break  # if we've made it this far, we're good to go
 
     except Exception as e:
       if chunk_days == try_chunk_days[-1]:
@@ -53,26 +62,22 @@ def get_sessions_from_api(fromdate, todate, username, api_key, api_url):
   if len(data) == 0:
     return pl.DataFrame()
 
-  # TODO: decide whether to cast types
-  int_cols = ['id']  # , 'patients_trained', 'member_trained']
+  # int_cols = ['id', 'patients_trained', 'member_trained']
   df = (
     pl.from_dicts(data)
-    .with_columns(cs.by_name(int_cols, require_all = False).cast(pl.Int64))
-    .with_columns(pl.col('session_date').str.to_date('%d-%m-%Y'))
+    # .with_columns(cs.by_name(int_cols, require_all = False).cast(pl.Int64))
     .with_columns(
+      pl.col('id').cast(pl.Int64),
+      pl.col('session_date').str.to_date('%d-%m-%Y'),
       cs.by_name('subdata', require_all = False)
       .map_elements(utils.json_dumps_list, return_dtype = pl.String))
   )
   return df
 
 
-def sync_sessions_by_user(
-    user_dict, params, extracted_at, stop_at = None, overlap_days = 30):
-  # TODO: how far back can sessions be created, edited, or deleted? affects overlap_days
-
-  if stop_at is not None and stop_at <= dt.datetime.now(dt.timezone.utc):
-    return None
-
+def sync_sessions_by_user(user_dict, params, extracted_at, overlap_days = 30):
+  # TODO: how far back can sessions be created? affects overlap_days
+  # per Hassan, previously submitted sessions cannot be edited or deleted
   q_pre = f"update `{params['dataset']}.{USERS_TABLE_NAME}` set"
   q_suf = f"where username = '{user_dict['username']}'"
 
@@ -107,7 +112,7 @@ def sync_sessions_by_user(
   return val
 
 
-def sync_data_to_warehouse(params, trigger_mode, max_duration_mins):
+def sync_data_to_warehouse(params, timeout_mins, trigger_mode):
   col_name = '_extracted_at'
 
   if trigger_mode == 'continuing':
@@ -117,11 +122,6 @@ def sync_data_to_warehouse(params, trigger_mode, max_duration_mins):
 
   if trigger_mode != 'continuing' or extracted_at is None:
     extracted_at = dt.datetime.now(dt.timezone.utc).replace(microsecond = 0)
-
-  if max_duration_mins > 0:
-    stop_at = extracted_at + dt.timedelta(minutes = max_duration_mins)
-  else:
-    stop_at = None
 
   q = (
     f"select username, max_todate, _extracted_at "
@@ -137,37 +137,36 @@ def sync_data_to_warehouse(params, trigger_mode, max_duration_mins):
   users = users.sort([col_name, 'username'])
 
   sync_sessions_by_user_p = functools.partial(
-    sync_sessions_by_user, params = params, extracted_at = extracted_at,
-    stop_at = stop_at)
+    sync_sessions_by_user, params = params, extracted_at = extracted_at)
 
-  with Pool(2) as p:  # api is easily overwhelmed
-    results = list(tqdm.tqdm(
-      p.imap_unordered(sync_sessions_by_user_p, users.rows(named = True)),
-      total = users.shape[0]))
-  # results = map(sync_sessions_by_user_p, tqdm.tqdm(users.rows(named = True)))
+  if timeout_mins > 0:
+    timeout = timeout_mins * 60
+  else:
+    timeout = None
 
-  if (None in results
-      and trigger_mode in ['oneormore', 'continuing']  # noqa: W503
-      and params['github_ref_name'] is not None):  # noqa: W503
-    trigger_workflow()
+  try:  # two workers because api is easily overwhelmed
+    with concurrent.futures.ThreadPoolExecutor(2) as executor:
+      list(tqdm.tqdm(
+        executor.map(
+          sync_sessions_by_user_p, users.rows(named = True), timeout = timeout),
+        total = users.shape[0]))
 
-  return results
+  except TimeoutError:
+    if (trigger_mode in ('oneormore', 'continuing')
+        and params['github_ref_name'] is not None):  # noqa: W503
+      trigger_workflow(timeout_mins)
+
+  return True
 
 
-def trigger_workflow(trigger_mode = 'continuing'):
+def trigger_workflow(timeout_mins, trigger_mode = 'continuing'):
+  g = github.Github(login_or_token = os.getenv('GH_PAT'))
+  repo = g.get_repo(os.getenv('GITHUB_REPOSITORY'))
   pattern = '(?<=\\.github/workflows/).+\\.ya?ml'
-  workflow_id = re.search(pattern, os.getenv('GITHUB_WORKFLOW_REF')).group(0)
-  url = (
-    f"https://api.github.com/repos/{os.getenv('GITHUB_REPOSITORY')}/"
-    f"actions/workflows/{workflow_id}/dispatches"
-  )
-  headers = {
-    'Accept': 'application/vnd.github+json',
-    'Authorization': 'Bearer ' + os.getenv('GITHUB_TOKEN'),
-    'X-GitHub-Api-Version': '2022-11-28'
-  }
-  payload = {'ref': os.getenv('GITHUB_REF_NAME'), 'trigger_mode': trigger_mode}
-  response = requests.post(url, headers = headers, json = payload)
+  workflow_name = re.search(pattern, os.getenv('GITHUB_WORKFLOW_REF')).group(0)
+  workflow = repo.get_workflow(workflow_name)
+  inputs = {'timeout_mins': str(timeout_mins), 'trigger_mode': trigger_mode}
+  response = workflow.create_dispatch(ref = os.getenv('GITHUB_REF_NAME'), inputs = inputs)
   return response
 
 
@@ -209,10 +208,10 @@ def upload_users(params, data_dir = 'data'):
 def parse_args():
   parser = argparse.ArgumentParser()
   parser.add_argument('--params-path', default = 'params.yaml', type = Path)
+  parser.add_argument('--timeout-mins', default = 60, type = int)
   parser.add_argument(
     '--trigger-mode', default = 'oneanddone',
     choices = ['oneanddone', 'oneormore', 'continuing'])
-  parser.add_argument('--max-duration-mins', default = 60, type = int)
   args = parser.parse_args()
   return args
 
@@ -222,7 +221,7 @@ def main():
     source_name = 'andhra_pradesh_mlhp'
     args = parse_args()
     params = utils.get_params(source_name, args.params_path)
-    sync_data_to_warehouse(params, args.trigger_mode, args.max_duration_mins)
+    sync_data_to_warehouse(params, args.timeout_mins, args.trigger_mode)
 
   except Exception as e:
     if params['environment'] == 'prod':
