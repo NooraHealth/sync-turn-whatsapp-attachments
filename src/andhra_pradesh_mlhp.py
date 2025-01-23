@@ -107,7 +107,7 @@ def sync_sessions_by_user(
   return val
 
 
-def sync_data_to_warehouse(params, trigger_mode, max_duration_mins):
+def sync_data_to_warehouse(params, max_duration_mins, trigger_mode):
   col_name = '_extracted_at'
 
   if trigger_mode == 'continuing':
@@ -149,25 +149,28 @@ def sync_data_to_warehouse(params, trigger_mode, max_duration_mins):
   if (None in results
       and trigger_mode in ['oneormore', 'continuing']  # noqa: W503
       and params['github_ref_name'] is not None):  # noqa: W503
-    trigger_workflow()
+    trigger_workflow(max_duration_mins)
 
   return results
 
 
-def trigger_workflow(trigger_mode = 'continuing'):
+def trigger_workflow(max_duration_mins, trigger_mode = 'continuing'):
   pattern = '(?<=\\.github/workflows/).+\\.ya?ml'
   workflow_id = re.search(pattern, os.getenv('GITHUB_WORKFLOW_REF')).group(0)
   url = (
     f"https://api.github.com/repos/{os.getenv('GITHUB_REPOSITORY')}/"
     f"actions/workflows/{workflow_id}/dispatches"
   )
-  print(url)
   headers = {
     'Accept': 'application/vnd.github+json',
     'Authorization': 'Bearer ' + os.getenv('GITHUB_TOKEN'),
     'X-GitHub-Api-Version': '2022-11-28'
   }
-  payload = {'ref': os.getenv('GITHUB_REF_NAME'), 'trigger_mode': trigger_mode}
+  payload = {
+    'ref': os.getenv('GITHUB_REF_NAME'),
+    'inputs': {'max_duration_mins': max_duration_mins, 'trigger_mode': trigger_mode}
+  }
+  print(payload)
   response = requests.post(url, headers = headers, json = payload)
   return response
 
@@ -210,10 +213,10 @@ def upload_users(params, data_dir = 'data'):
 def parse_args():
   parser = argparse.ArgumentParser()
   parser.add_argument('--params-path', default = 'params.yaml', type = Path)
+  parser.add_argument('--max-duration-mins', default = 60, type = int)
   parser.add_argument(
     '--trigger-mode', default = 'oneanddone',
     choices = ['oneanddone', 'oneormore', 'continuing'])
-  parser.add_argument('--max-duration-mins', default = 60, type = int)
   args = parser.parse_args()
   return args
 
@@ -223,7 +226,7 @@ def main():
     source_name = 'andhra_pradesh_mlhp'
     args = parse_args()
     params = utils.get_params(source_name, args.params_path)
-    sync_data_to_warehouse(params, args.trigger_mode, args.max_duration_mins)
+    sync_data_to_warehouse(params, args.max_duration_mins, args.trigger_mode)
 
   except Exception as e:
     if params['environment'] == 'prod':
