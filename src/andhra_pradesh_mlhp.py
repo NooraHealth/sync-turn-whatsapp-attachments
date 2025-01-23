@@ -146,10 +146,6 @@ def sync_data_to_warehouse(params, trigger_mode, max_duration_mins):
       total = users.shape[0]))
   # results = map(sync_sessions_by_user_p, tqdm.tqdm(users.rows(named = True)))
 
-  print(f'None in results: {None in results}')
-  print(f'trigger_mode: {trigger_mode}')
-  print(f"github_ref_name: {params['github_ref_name']}")
-
   if (None in results
       and trigger_mode in ['oneormore', 'continuing']  # noqa: W503
       and params['github_ref_name'] is not None):  # noqa: W503
@@ -165,6 +161,7 @@ def trigger_workflow(trigger_mode = 'continuing'):
     f"https://api.github.com/repos/{os.getenv('GITHUB_REPOSITORY')}/"
     f"actions/workflows/{workflow_id}/dispatches"
   )
+  print(url)
   headers = {
     'Accept': 'application/vnd.github+json',
     'Authorization': 'Bearer ' + os.getenv('GITHUB_TOKEN'),
