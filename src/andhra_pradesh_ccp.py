@@ -115,15 +115,12 @@ def read_data_from_api(params, dates):
   report.login()
   iter_dates = [*dt_iterate(dates['start'], dates['end'], timedelta(days = 1))]
 
-  # with mp.get_context('spawn').Pool() as p:
   with concurrent.futures.ThreadPoolExecutor() as executor:
     patient_trainings_nested = executor.map(report.get_patient_training, iter_dates)
   patient_trainings = [x2 for x1 in patient_trainings_nested for x2 in x1]
 
-  # with mp.get_context('spawn').Pool() as p:
   with concurrent.futures.ThreadPoolExecutor() as executor:
     nurse_trainings_nested = executor.map(report.get_nurse_training, iter_dates)
-  # nurse_trainings_nested = map(report.get_nurse_training, iter_dates)
 
   nurse_trainings = [x2 for x1 in nurse_trainings_nested for x2 in x1]
 
@@ -153,40 +150,36 @@ def read_data_from_api(params, dates):
 
   all_phones = list(set(phones_in_patient_trainings + phones_in_nurse_trainings))
 
-  # with mp.get_context('spawn').Pool() as p:
   with concurrent.futures.ThreadPoolExecutor() as executor:
     nurse_details_nested = executor.map(report.get_nurse_details, all_phones)
-  # nurse_details_nested = map(report.get_nurse_details, all_phones)
   nurses = [x2 for x1 in nurse_details_nested for x2 in x1]
 
-  nurses_df = pl.from_dicts(nurses)
-  nurses_df = nurses_df.with_columns(
+  nurses_df = pl.from_dicts(nurses).with_columns(
     cs.by_name('user_created_dateandtime', require_all = False)
     .str.to_datetime('%Y-%m-%d %H:%M:%S')
   )
 
-  patient_trainings_df = pl.from_dicts(patient_trainings)
   int_cols = ['mothers_trained', 'family_members_trained', 'total_trained']
   patient_trainings_df = (
-    patient_trainings_df
-    .with_columns(cs.by_name(int_cols, require_all = False).cast(pl.Int64))
-    .with_columns(pl.col('date_of_session').str.to_date('%d-%m-%Y'))
+    pl.from_dicts(patient_trainings)
     .with_columns(
+      pl.col('date_of_session').str.to_date('%d-%m-%Y'),
+      cs.by_name(int_cols, require_all = False).cast(pl.Int64),
       cs.by_name('data1', require_all = False)
-      .map_elements(utils.json_dumps_list, return_dtype = pl.String))
+      .map_elements(utils.json_dumps_list, return_dtype = pl.String)
+    )
   )
 
-  nurse_trainings_df = pl.from_dicts(nurse_trainings)
   int_cols = ['totalmaster_trainer', 'total_trainees']
   struct_cols = ['trainerdata1', 'traineesdata1']
   nurse_trainings_df = (
-    nurse_trainings_df
-    .with_columns(cs.by_name(int_cols, require_all = False).cast(pl.Int64))
+    pl.from_dicts(nurse_trainings)
     .with_columns(
-      cs.by_name('sessiondateandtime', require_all = False).str.to_date('%d-%m-%Y'))
-    .with_columns(
+      cs.by_name('sessiondateandtime', require_all = False).str.to_date('%d-%m-%Y'),
+      cs.by_name(int_cols, require_all = False).cast(pl.Int64),
       cs.by_name(struct_cols, require_all = False)
-      .map_elements(utils.json_dumps_list, return_dtype = pl.String))
+      .map_elements(utils.json_dumps_list, return_dtype = pl.String)
+    )
   )
 
   data_frames = {
