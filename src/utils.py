@@ -1,9 +1,11 @@
+import google
 import io
 import json
 import os
 import oyaml as yaml
 import polars as pl
 import slack_sdk
+import time
 import uuid
 import warnings
 from google.cloud import bigquery
@@ -50,10 +52,22 @@ def json_dumps_list(x):
   return json.dumps(x.to_list())
 
 
-def run_bigquery(query, credentials):
+def run_bigquery(query, credentials, num_tries = 5, wait_secs = 5):
   client = bigquery.Client(credentials = credentials)
-  query_job = client.query(query)
-  return query_job.result()
+  gtg = False
+  idx_try = 1
+  while not gtg and idx_try <= num_tries:
+    try:
+      query_job = client.query(query)
+      result = query_job.result()
+      gtg = True
+    except google.api_core.exceptions.BadRequest as e:
+      if 'due to concurrent update' in str(e) and (idx_try < num_tries):
+        time.sleep(wait_secs)
+        idx_try += 1
+      else:
+        raise e
+  return result
 
 
 def read_bigquery(query, credentials):

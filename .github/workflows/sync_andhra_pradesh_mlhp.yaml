@@ -20,6 +20,13 @@ on:
           - oneanddone
           - oneormore
           - continuing
+      max_workers:
+        required: false
+        type: choice
+        options:
+          - 1
+          - 2
+          - 4
 
 jobs:
   sync-to-warehouse:
@@ -31,8 +38,9 @@ jobs:
       SERVICE_ACCOUNT_KEY: ${{ secrets.SERVICE_ACCOUNT_KEY }}
       SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-      TIMEOUT_MINS: ${{ inputs.timeout_mins || (github.event_name == 'pull_request' && '5' || '240') }}
-      TRIGGER_MODE: ${{ inputs.trigger_mode || (github.event_name == 'pull_request' && 'oneanddone' || 'oneormore') }}
+      TIMEOUT_MINS: ${{ inputs.timeout_mins || '240' }}
+      TRIGGER_MODE: ${{ inputs.trigger_mode || 'oneormore' }}
+      MAX_WORKERS: ${{ inputs.max_workers || '4' }}
 
     steps:
       - name: Checkout code
@@ -51,4 +59,8 @@ jobs:
         run: uv sync
 
       - name: Run script
-        run: uv run -m src.andhra_pradesh_mlhp --timeout-mins $TIMEOUT_MINS --trigger-mode $TRIGGER_MODE
+        run: >
+          uv run -m src.andhra_pradesh_mlhp
+          --timeout-mins $TIMEOUT_MINS
+          --trigger-mode $TRIGGER_MODE
+          --max-workers $MAX_WORKERS
