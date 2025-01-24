@@ -8,6 +8,7 @@ import polars as pl
 import polars.selectors as cs
 import re
 import requests
+import time
 import tqdm
 from pathlib import Path
 from . import utils
@@ -17,7 +18,7 @@ USERS_TABLE_NAME = 'users'
 DEFAULT_EXTRACTED_AT = dt.datetime(2023, 4, 1).replace(tzinfo = dt.timezone.utc)
 
 
-def get_try_chunk_days(range_days, try_chunk_days = (180, 60, 21, 7, 2, 1)):
+def get_try_chunk_days(range_days, try_chunk_days = (90, 45, 21, 10, 3)):
   idx = next(
     (i for i in range(len(try_chunk_days)) if try_chunk_days[i] < range_days),
     len(try_chunk_days))
@@ -44,6 +45,7 @@ def get_sessions_from_api(fromdate, todate, username, api_key, api_url):
     try:
       if chunk_days != try_chunk_days[0]:
         print(f'Downshifting username {username} to chunk_days={chunk_days}')
+        time.sleep(3)
       chunk_dates = get_chunk_dates(fromdate, todate, chunk_days)
       data = []
 
@@ -163,7 +165,7 @@ def trigger_workflow(timeout_mins, trigger_mode = 'continuing'):
   workflow_name = re.search(pattern, os.getenv('GITHUB_WORKFLOW_REF')).group(0)
   workflow = repo.get_workflow(workflow_name)
   inputs = {'timeout_mins': str(timeout_mins), 'trigger_mode': trigger_mode}
-  response = workflow.create_dispatch(ref = os.getenv('GITHUB_REF_NAME'), inputs = inputs)
+  response = workflow.create_dispatch(os.getenv('GITHUB_REF_NAME'), inputs = inputs)
   return response
 
 
@@ -209,6 +211,7 @@ def parse_args():
   parser.add_argument(
     '--trigger-mode', default = 'oneanddone',
     choices = ['oneanddone', 'oneormore', 'continuing'])
+  parser.add_argument('--max-workers', default = 4, type = int)
   args = parser.parse_args()
   return args
 
@@ -218,7 +221,7 @@ def main():
     source_name = 'andhra_pradesh_mlhp'
     args = parse_args()
     params = utils.get_params(source_name, args.params_path)
-    sync_data_to_warehouse(params, args.timeout_mins, args.trigger_mode)
+    sync_data_to_warehouse(params, args.timeout_mins, args.trigger_mode, args.max_workers)
 
   except Exception as e:
     if params['environment'] == 'prod':
