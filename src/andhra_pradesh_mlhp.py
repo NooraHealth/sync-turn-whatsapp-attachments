@@ -9,8 +9,8 @@ import polars.selectors as cs
 import re
 import requests
 import time
-import tqdm
 from pathlib import Path
+from tqdm import tqdm
 from . import utils
 
 
@@ -77,78 +77,98 @@ def get_sessions_from_api(fromdate, todate, username, api_key, api_url):
   return df
 
 
-def sync_sessions_by_user(user_dict, params, extracted_at, overlap_days = 30):
+def sync_sessions_by_users(users_slice, params, extracted_at, overlap_days = 30):
   # TODO: how far back can sessions be created? affects overlap_days
-  # per Hassan, previously submitted sessions cannot be edited or deleted
+  def get_where(x, colname = 'username'):
+    return f"where {colname} in ('{"', '".join(x)}')"
+
   q_pre = f"update `{params['dataset']}.{USERS_TABLE_NAME}` set"
-  q_suf = f"where username = '{user_dict['username']}'"
-
-  query = f'{q_pre} is_extracting = true {q_suf}'
+  query = q_pre + ' is_extracting = true ' + get_where(users_slice['username'].to_list())
   utils.run_bigquery(query, params['credentials'])
 
-  fromdate = max(DEFAULT_EXTRACTED_AT.date(), user_dict['max_todate'])
+  sessions_list = []
+  ok_usernames = []
+  err_usernames = []
   todate = extracted_at.date() - dt.timedelta(days = 1)
+  (api_key, api_url) = [params['source_params'][x] for x in ('key', 'url')]
 
-  try:
-    df = get_sessions_from_api(
-      fromdate, todate, user_dict['username'],
-      params['source_params']['key'], params['source_params']['url'])
+  for user in users_slice.iter_rows(named = True):
+    try:
+      fromdate = max(DEFAULT_EXTRACTED_AT.date(), user['max_todate'])
+      sessions_now = get_sessions_from_api(
+        fromdate, todate, user['username'], api_key, api_url)
+      sessions_list.append(sessions_now)
+      ok_usernames.append(user['username'])
 
-    if df.shape[0] > 0:
-      df = utils.add_extracted_columns(df, extracted_at)
-      utils.write_bigquery(df, 'sessions', params, 'WRITE_APPEND')
+    except Exception as e:
+      print(f"Error for username {user['username']}: {e}")
+      err_usernames.append(user['username'])
 
-    query = (
-      f"{q_pre} max_todate = date('{todate}'), "
+  if len(sessions_list) > 0:
+    sessions = pl.concat(sessions_list, how = 'diagonal_relaxed')
+    if sessions.shape[0] > 0:
+      sessions = utils.add_extracted_columns(sessions, extracted_at)
+      utils.write_bigquery(sessions, 'sessions', params, 'WRITE_APPEND')
+
+  if len(ok_usernames) > 0:
+    query = q_pre + (
+      f" max_todate = date('{todate}'), "
       f"_extracted_at = timestamp('{extracted_at}'), "
-      f"is_extracting = false {q_suf}"
-    )
-    val = df.shape[0]
+      f"is_extracting = false "
+    ) + get_where(ok_usernames)
+    utils.run_bigquery(query, params['credentials'])
 
-  except Exception as e:
-    print(f"Error for username {user_dict['username']}: {e}")
-    query = f"{q_pre} is_extracting = false {q_suf}"
-    val = -1
+  if len(err_usernames) > 0:
+    query = q_pre + ' is_extracting = false ' + get_where(err_usernames)
+    utils.run_bigquery(query, params['credentials'])
 
-  utils.run_bigquery(query, params['credentials'])
-  return val
+  return users_slice.shape[0]
 
 
 def sync_data_to_warehouse(params, timeout_mins, trigger_mode, max_workers = 4):
   col_name = '_extracted_at'
+  timeout = timeout_mins * 60 if timeout_mins > 0 else None
+  num_users_per_slice = 10  # bigquery quota of 1500 table appends per 24 hours
 
   if trigger_mode == 'continuing':
-    q = f"select max({col_name}) from `{params['dataset']}.{USERS_TABLE_NAME}`"
-    df = utils.read_bigquery(q, params['credentials'])
-    extracted_at = df.item()
+    query = f"select max({col_name}) from `{params['dataset']}.{USERS_TABLE_NAME}`"
+    extracted_at = utils.read_bigquery(query, params['credentials']).item()
 
   if trigger_mode != 'continuing' or extracted_at is None:
     extracted_at = dt.datetime.now(dt.timezone.utc).replace(microsecond = 0)
 
-  q = (
+  query = (
     f"select username, max_todate, _extracted_at "
     f"from `{params['dataset']}.{USERS_TABLE_NAME}`"
   )
   if trigger_mode == 'continuing':
-    q += (
+    query += (
       f" where {col_name} is null or {col_name} != "
       f"(select max({col_name}) from `{params['dataset']}.{USERS_TABLE_NAME}`)"
     )
+  users = utils.read_bigquery(query, params['credentials']).sort([col_name, 'username'])
 
-  users = utils.read_bigquery(q, params['credentials'])
-  users = users.sort([col_name, 'username'])
-
-  sync_sessions_by_user_p = functools.partial(
-    sync_sessions_by_user, params = params, extracted_at = extracted_at)
-
-  timeout = timeout_mins * 60 if timeout_mins > 0 else None
+  sync_sessions_by_users_p = functools.partial(
+    sync_sessions_by_users, params = params, extracted_at = extracted_at)
 
   try:  # api is easily overwhelmed
+    # this version wasn't timing out properly and wasn't updating the progress bar
+    # with tqdm(total = users.shape[0]) as pbar:
+    #   with concurrent.futures.ThreadPoolExecutor(max_workers) as executor:
+    #     futures = [
+    #       executor.submit(sync_sessions_by_users_p, users_slice)
+    #       for users_slice in users.iter_slices(num_users_per_slice)]
+    #     for future in concurrent.futures.as_completed(futures, timeout = timeout):
+    #       num_users_this_slice = future.result()
+    #       pbar.update(num_users_this_slice)
+
     with concurrent.futures.ThreadPoolExecutor(max_workers) as executor:
-      list(tqdm.tqdm(
+      list(tqdm(
         executor.map(
-          sync_sessions_by_user_p, users.rows(named = True), timeout = timeout),
-        total = users.shape[0]))
+          sync_sessions_by_users_p,
+          users.iter_slices(num_users_per_slice),
+          timeout = timeout),
+        total = (users.shape[0] // num_users_per_slice) + 1))
 
   except TimeoutError:
     if (trigger_mode in ('oneormore', 'continuing')
