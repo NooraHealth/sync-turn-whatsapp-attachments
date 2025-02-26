@@ -5,9 +5,9 @@ sources:
   - name: andhra_pradesh_ccp
     environments:
       - name: prod
-        dataset: ccp_andhra_pradesh
+        dataset: andhra_pradesh_ccp
       - name: dev
-        dataset: ccp_andhra_pradesh_dev
+        dataset: andhra_pradesh_ccp_dev
   - name: andhra_pradesh_mlhp
     environments:
       - name: prod
