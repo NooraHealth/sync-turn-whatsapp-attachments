@@ -8,7 +8,8 @@ import slack_sdk
 import time
 import uuid
 import warnings
-from google.cloud import bigquery
+import mimetypes
+from google.cloud import bigquery, storage
 from google.oauth2.service_account import Credentials
 from pathlib import Path
 
@@ -30,21 +31,27 @@ def get_params(source_name, params_path = 'params.yaml', envir = None):
   params.update(z)
   del params['sources']
 
-  key = 'service_account_key'
+  key_raw = 'service_account_key_raw'
+  key_analytics = 'service_account_key_analytics'
   if github_ref_name is None:
-    with open(Path('secrets', params[key])) as f:
-      params[key] = json.load(f)
+    with open(Path('secrets', params[key_raw])) as f:
+      params[key_raw] = json.load(f)
+    with open(Path('secrets', params[key_analytics])) as f:
+      params[key_analytics] = json.load(f)
     with open(Path('secrets', 'slack_token.txt')) as f:
       params['slack_token'] = f.read().strip('\n')
     with open(Path('secrets', f'{source_name}.yaml')) as f:
       params['source_params'] = yaml.safe_load(f)
   else:
-    params[key] = json.loads(os.getenv('SERVICE_ACCOUNT_KEY'))
+    params[key_raw] = json.loads(os.getenv('SERVICE_ACCOUNT_KEY_RAW'))
+    params[key_analytics] = json.loads(os.getenv('SERVICE_ACCOUNT_KEY_ANALYTICS'))
     params['slack_token'] = os.getenv('SLACK_TOKEN')
     params['source_params'] = yaml.safe_load(os.getenv('SOURCE_PARAMS'))
 
-  params['credentials'] = Credentials.from_service_account_info(params[key])
-  del params[key]
+  params['credentials_raw'] = Credentials.from_service_account_info(params[key_raw])
+  params['credentials_analytics'] = Credentials.from_service_account_info(params[key_analytics])
+  del params[key_raw]
+  del params[key_analytics]
   return params
 
 
@@ -81,51 +88,6 @@ def read_bigquery_exists(table_name, params):
   q = f"select * from `{params['dataset']}.__TABLES__` where table_id = '{table_name}'"
   df = read_bigquery(q, params['credentials'])
   return df.shape[0] > 0
-
-
-def get_bigquery_schema(df):
-  n = 'NUMERIC'
-  i = 'INT64'
-  s = 'STRING'
-  dtype_mappings = {
-    pl.Decimal: n, pl.Float32: n, pl.Float64: n,
-    pl.Int8: i, pl.Int16: i, pl.Int32: i, pl.Int64: i,
-    pl.UInt8: i, pl.UInt16: i, pl.UInt32: i, pl.UInt64: i,
-    pl.String: s, pl.Categorical: s, pl.Enum: s, pl.Utf8: s,
-    pl.Binary: 'BOOLEAN', pl.Boolean: 'BOOLEAN', pl.Date: 'DATE',
-    pl.Datetime('us', time_zone = 'UTC'): 'TIMESTAMP',
-    pl.Datetime('us', time_zone = None): 'DATETIME',  # won't work for other time zones
-    pl.Time: 'TIME', pl.Duration: 'INTERVAL', pl.Null: 'STRING'
-  }
-  schema = []
-  for j in range(df.shape[1]):
-    dtype = dtype_mappings[df.dtypes[j]]
-    schema.append(bigquery.SchemaField(df.columns[j], dtype))
-  return schema
-
-
-def write_bigquery(df, table_name, params, write_disposition = 'WRITE_EMPTY'):
-  schema = get_bigquery_schema(df)
-  client = bigquery.Client(credentials = params['credentials'])
-  with io.BytesIO() as stream:
-    df.write_parquet(stream)
-    stream.seek(0)
-    job_config = bigquery.LoadJobConfig(
-      source_format = 'PARQUET', schema = schema, write_disposition = write_disposition)
-    job = client.load_table_from_file(
-      stream, destination = f"{params['dataset']}.{table_name}",
-      project = params['project'], job_config = job_config)
-  job.result()
-  return df.shape[0]
-
-
-def add_extracted_columns(df, extracted_at = None):
-  if extracted_at is not None:
-    df = df.with_columns(_extracted_at = pl.lit(extracted_at))
-  uuids = [str(uuid.uuid4()) for _ in range(df.shape[0])]
-  df = df.with_columns(pl.Series('_extracted_uuid', uuids))
-  return df
-
 
 def get_slack_message_text(e, source_name):
   text = (
