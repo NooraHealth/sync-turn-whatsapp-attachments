@@ -4,4 +4,9 @@ service_account_key_analytics: service_account_key_analytics.json
 turn_headers: turn_auth.json
 project_raw: noorahealth-raw
 project_analytics: noorahealth-analytics
-bucket_name: noora_test_bucket
+
+environments:
+  dev:
+    bucket_name: noora_test_bucket
+  prod:
+    bucket_name: noora_whatsapp_attachments_inbound

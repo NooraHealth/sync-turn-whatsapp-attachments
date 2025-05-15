@@ -1,16 +1,18 @@
-name: Sync Andhra Pradesh CCP
+name: Sync Whatsapp Attachments
 
 on:
   schedule:
-    - cron: '30 16 * * 0'
+    - cron: '0 0 * * 0'
   workflow_dispatch:
 
 jobs:
-  sync-to-warehouse:
+  sync:
     runs-on: ubuntu-latest
     env:
-      SOURCE_PARAMS: ${{ secrets.ANDHRA_PRADESH_CCP }}
-      SERVICE_ACCOUNT_KEY: ${{ secrets.SERVICE_ACCOUNT_KEY }}
+      SOURCE_PARAMS: ${{ secrets.TURN_ATTACHMENTS }}
+      SERVICE_ACCOUNT_KEY_RAW: ${{ secrets.SERVICE_ACCOUNT_KEY_RAW }}
+      SERVICE_ACCOUNT_KEY_ANALYTICS: ${{ secrets.SERVICE_ACCOUNT_KEY_ANALYTICS }}
+      TURN_AUTH: ${{ secrets.TURN_AUTH }}
       SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
@@ -31,4 +33,4 @@ jobs:
         run: uv sync
 
       - name: Run script
-        run: uv run -m src.andhra_pradesh_ccp
+        run: uv run -m src.turn_attachments
