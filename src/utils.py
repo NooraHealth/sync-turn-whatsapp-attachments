@@ -84,18 +84,18 @@ def derive_filename(uri, mime_type):
         filename = f"{name}{ext}"
     return filename
 
-def upload_bytes_to_gcs(data, bucket, filename, destination):
-    """
-    Upload raw bytes to GCS, setting a content-type.
-    Returns the blob object.
-    """
-    blob = bucket.blob(destination)
-    blob.upload_from_string(
-      data,
-      content_type=mimetypes.guess_type(filename)[0] or "application/octet-stream"
-      )
-    content_type = mimetypes.guess_type(destination)[0] or 'application/octet-stream'
-    return blob
+# def upload_bytes_to_gcs(data, bucket, filename, destination):
+#     """
+#     Upload raw bytes to GCS, setting a content-type.
+#     Returns the blob object.
+#     """
+#     blob = bucket.blob(destination)
+#     blob.upload_from_string(
+#       data,
+#       content_type=mimetypes.guess_type(filename)[0] or "application/octet-stream"
+#       )
+#     content_type = mimetypes.guess_type(destination)[0] or 'application/octet-stream'
+#     return blob
 
 
 def run_read_bigquery(query, credentials, num_tries = 5, wait_secs = 5):

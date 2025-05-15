@@ -1,64 +1,79 @@
-from google.cloud import bigquery, storage
-from google.oauth2 import service_account
-from requests.exceptions import RequestException
 import requests
 import pandas as pd
 import os
 import mimetypes
 import argparse
+from pathlib import Path
 from . import utils
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Sync WhatsApp attachments to GCS and notify on errors.")
+    parser.add_argument(
+        '--params-path',
+        type=Path,
+        default=Path('params.yaml'),
+        help='Path to the params.yaml file'
+    )
+    return parser.parse_args()
 
-
-
-for _, row in df[2270:2300].iterrows():
-    uri = row["uri"]
-    phone = row["channel_phone"]
-    media_type = row["media_type"]
-    headers = turn_headers.get(phone)
-
-    if headers is None:
-        print(f"No headers configured for {phone!r}, skipping {uri}")
-        continue
-
-    resp = requests.get(uri, headers=headers)
-
-    if resp.status_code != 200:
-      print(f"Skipping {uri}: status {resp.status_code}")
-      continue
-
-    # derive a sane filename
-    filename = os.path.basename(uri)  # e.g. "649092494159511" or "649092494159511.ogg"
-    name, ext = os.path.splitext(filename)
-    # if missing extension, derive one from mime_type
-    if not ext:
-        mime = row["mime_type"]
-        ext = mimetypes.guess_extension(mime) if mime else None
-        filename = f"{name}{ext or ''}"
-        print(filename)
-    filepath = os.path.join("samples", filename)
-    # upload to GCS”
-    destination = f"{media_type}/{filename}"
-    blob = bucket.blob(destination)
-    blob.upload_from_string(resp.content)
-    # with open(filepath, "wb") as fp:
-    #     fp.write(resp.content)
-    print(f"Saved {filename}")
 
 def main():
-  try:
-    source_name = 'turn_attachments'
     args = parse_args()
-    params = utils.get_params(source_name, args.params_path)
-    
+    params = utils.get_params(args.params_path)
 
-  except Exception as e:
-    if params['environment'] == 'prod':
-      text = utils.get_slack_message_text(e, source_name)
-      utils.send_message_to_slack(
-        text, params['slack_channel_id'], params['slack_token'])
-    raise e
+    try:
+        # Fetch recent attachments from BigQuery
+        project_analytics = params['project_analytics']
+        creds_analytics = params['credentials_analytics']
+        query = f"""
+          SELECT *
+          FROM `{project_analytics}.prod.res_message_attachments`
+          WHERE inserted_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 31 DAY)
+            AND media_type NOT IN ('location', 'sticker')
+          ORDER BY channel_phone
+          """
+        df = utils.run_read_bigquery(query, creds_analytics)
+
+        # Prepare GCS bucket
+        storage_client = utils.get_storage_client(params['project_raw'], params['credentials_raw'])
+        bucket = storage_client.bucket(params['bucket_name'])
+
+        # Download each attachment and upload to GCS
+        for _, row in df.iterrows():
+            uri = row['uri']
+            media_type = row['media_type']
+            mime_type = row['mime_type']
+            phone = row['channel_phone']
+            headers = params['turn_headers'].get(phone)
+            
+            if headers is None:
+                #print(f"No headers configured for {phone!r}, skipping {uri}")
+                continue
+
+            response = requests.get(uri, headers=headers)
+            if response.status_code != 200:
+                #print(f"Skipping {uri}: status {response.status_code}")
+                continue
+
+            filename = utils.derive_filename(uri, mime_type)
+            destination = f"{media_type}{filename}"
+            blob = bucket.blob(destination)
+            blob.upload_from_string(
+                response.content,
+                content_type=mimetypes.guess_type(filename)[0] or "application/octet-stream"
+            )
+            print(f"Saved {filename}")
+
+    except Exception as e:
+        # Notify on Slack if running in prod
+        text = utils.get_slack_message_text(e)
+        utils.send_message_to_slack(
+            text,
+            params['slack_channel_id'],
+            params['slack_token']
+        )
+        raise e
 
 
 if __name__ == '__main__':
-  main()
+    main()
