@@ -1,7 +1,0 @@
-google-cloud-bigquery>=3.27.0
-oyaml>=1.0
-polars==1.17.0
-pyarrow>=18.1.0
-pygithub>=2.5.0
-requests>=2.32.3
-slack-sdk>=3.34.0

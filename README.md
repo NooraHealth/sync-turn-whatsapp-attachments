@@ -1,12 +1,10 @@
-[![sync_andhra_pradesh_ccp](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/sync_andhra_pradesh_ccp.yaml/badge.svg)](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/sync_andhra_pradesh_ccp.yaml)
-
-[![sync_andhra_pradesh_mlhp](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/sync_andhra_pradesh_mlhp.yaml/badge.svg)](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/sync_andhra_pradesh_mlhp.yaml)
+[![sync_whatsapp_attachments](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/sync_whatsapp_attachments.yaml/badge.svg)](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/sync_whatsapp_attachments.yaml)
 
 # Overview
 
-This repository contains GitHub Actions workflows that fetch data from the Andhra Pradesh CCP API and the Andhra Pradesh MLHP API and sync the data to the BigQuery data warehouse.
+This repository contains GitHub Actions workflows that fetch inbound message attachmnets data from Turn API and sync the data to GCP storage bucket.
 
-When syncing to BigQuery, the code fetches data starting with 30 days prior to the latest data existing in BigQuery. This redundancy accounts for the possibility that historical data behind the APIs can change. Per Hassan, editing or deleting submissions is not allowed, but new submissions can be back-dated up to 15 days. The data are deduplicated in dbt.
+The sync runs daily and the code fetches data for the past 2 days.
 
 ## Setup
 
@@ -18,22 +16,10 @@ When syncing to BigQuery, the code fetches data starting with 30 days prior to t
    5. Run python scripts using `uv run path_to_script.py`.
 
 2. Configure the repository secrets locally.
-   1. Create a file secrets/andhra_pradesh_ccp.yml as follows, replacing `xxx` as appropriate:
-
-      ```yaml
-      url: xxx
-      username: xxx
-      password: xxx
-      ```
-      The `url` is currently a proxy URL, because the actual API is inaccessible within GitHub Actions due to an unresolvable misconfiguration on the API server.
-   2. Create a file secrets/andhra_pradesh_mlhp.yml as follows, replacing `xxx` as appropriate:
-
-      ```yaml
-      url: xxx
-      key: xxx
-      ```
-   3. Create a file secrets/slack_token.txt that contains the Slack bot token.
-   4. Create a file secrets/service_account_key.json that contains the JSON key for the service account that will connect to BigQuery (airbyte-user).
+   1. Create a file secrets/slack_token.txt that contains the Slack bot token.
+   2. Create a file secrets/service_account_key_raw.json that contains the JSON key for the service account that will dump the data to the storage buckets (airbyte-user).
+   3. Create a file secrets/service_account_key_analytics.json that contains the JSON key for the service account that will connect to BigQuery (metabase-user).
+   4. Create a file secrets/turn_auth.json that contains the JSON key for the API headers used by turn for each line (available on passbolt).
    5. Create a file secrets/gh_pat.txt that contains a GitHub fine-grained personal access token that has
       - access on the NooraHealth organization
       - repository access to this repo
