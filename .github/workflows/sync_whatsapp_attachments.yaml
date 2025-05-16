@@ -2,7 +2,7 @@ name: Sync Whatsapp Attachments
 
 on:
   schedule:
-    - cron: '0 0 * * 0'
+    - cron: '0 0 * * *'
   workflow_dispatch:
 
 jobs:
@@ -12,7 +12,7 @@ jobs:
       SOURCE_PARAMS: ${{ secrets.TURN_ATTACHMENTS }}
       SERVICE_ACCOUNT_KEY_RAW: ${{ secrets.SERVICE_ACCOUNT_KEY_RAW }}
       SERVICE_ACCOUNT_KEY_ANALYTICS: ${{ secrets.SERVICE_ACCOUNT_KEY_ANALYTICS }}
-      TURN_AUTH: ${{ secrets.TURN_AUTH }}
+      TURN_HEADERS: ${{ secrets.TURN_AUTH }}
       SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
@@ -21,16 +21,16 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v5
         with:
-          version: '0.5.4'
+          version: '0.7.3'
           enable-cache: true
 
       - name: Set up Python
         run: uv python install
 
-      - name: Install the project
-        run: uv sync
+      - name: Install the Project
+        run: uv sync --locked
 
       - name: Run script
-        run: uv run -m src.turn_attachments
+        run: uv run python src/turn_attachments.py
