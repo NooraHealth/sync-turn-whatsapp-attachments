@@ -2,12 +2,13 @@ import google
 import json
 import os
 import time
+import pandas as pd
 import oyaml as yaml
 import slack_sdk
 import mimetypes
 from urllib.parse import urlparse
 from pathlib import Path
-from google.cloud import bigquery, storage
+from google.cloud import bigquery, bigquery_storage, storage
 from google.oauth2.service_account import Credentials
 
 

@@ -1,8 +1,8 @@
 import requests
 import mimetypes
 import argparse
+import utils
 from pathlib import Path
-from . import utils
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Sync WhatsApp attachments to GCS and notify on errors.")
@@ -37,7 +37,7 @@ def main():
         bucket = storage_client.bucket(params['bucket_name'])
 
         # Download each attachment and upload to GCS
-        for _, row in df.iterrows():
+        for _, row in df[1:4].iterrows():
             uri = row['uri']
             media_type = row['media_type']
             mime_type = row['mime_type']
@@ -54,7 +54,7 @@ def main():
                 continue
 
             filename = utils.derive_filename(uri, mime_type)
-            destination = f"{media_type}{filename}"
+            destination = f"{media_type}/{filename}"
             blob = bucket.blob(destination)
             blob.upload_from_string(
                 response.content,
