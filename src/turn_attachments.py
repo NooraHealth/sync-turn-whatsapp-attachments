@@ -42,25 +42,26 @@ def main():
             media_type = row['media_type']
             mime_type = row['mime_type']
             phone = row['channel_phone']
-            headers = params['turn_headers'].get(phone)
-            
+            #headers = params['turn_headers'].get(phone)
+            headers = params['turn_headers'][phone]
+
             if headers is None:
                 #print(f"No headers configured for {phone!r}, skipping {uri}")
                 continue
 
             response = requests.get(uri, headers=headers)
-            if response.status_code != 200:
+            if response.status_code == 200:
+                filename = utils.derive_filename(uri, mime_type)
+                destination = f"{media_type}/{filename}"
+                blob = bucket.blob(destination)
+                blob.upload_from_string(
+                    response.content,
+                    content_type=mimetypes.guess_type(filename)[0] or "application/octet-stream"
+                )
+                print(f"Saved {filename}")
+            else:
                 #print(f"Skipping {uri}: status {response.status_code}")
                 continue
-
-            filename = utils.derive_filename(uri, mime_type)
-            destination = f"{media_type}/{filename}"
-            blob = bucket.blob(destination)
-            blob.upload_from_string(
-                response.content,
-                content_type=mimetypes.guess_type(filename)[0] or "application/octet-stream"
-            )
-            print(f"Saved {filename}")
 
     except Exception as e:
         # Notify on Slack if running in prod

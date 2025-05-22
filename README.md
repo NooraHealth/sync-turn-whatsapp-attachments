@@ -20,14 +20,10 @@ The sync runs daily and the code fetches data for the past 2 days.
    2. Create a file secrets/service_account_key_raw.json that contains the JSON key for the service account that will dump the data to the storage buckets (airbyte-user). Ensure that this has 'Storage Object User' permission on the dev and prod buckets.
    3. Create a file secrets/service_account_key_analytics.json that contains the JSON key for the service account that will connect to BigQuery (metabase-user).
    4. Create a file secrets/turn_auth.json that contains the JSON key for the API headers used by turn for each line (available on passbolt).
-   5. Create a file secrets/gh_pat.txt that contains a GitHub fine-grained personal access token that has
-      - access on the NooraHealth organization
-      - repository access to this repo
-      - read and write permissions for Actions
 
 3. Configure the repository secrets on GitHub.
    1. Copy and paste the contents of secrets/slack_token.txt into a secret named "SLACK_TOKEN".
    2. Copy and paste the contents of secrets/service_account_key_raw.json into a secret named "SERVICE_ACCOUNT_KEY_RAW".
    3. Copy and paste the contents of secrets/service_account_key_analytics.json into a secret named "SERVICE_ACCOUNT_KEY_ANALYTICS".
    4. Copy and paste the contents of secrets/turn_auth.json into a secret named "TURN_HEADERS".
-   5. Copy and paste the contents of secrets/gh_pat.txt into a secret named "GH_PAT".
+   5. Create a GH Token with read and write access for Actions and paste it into a secret named "GH_PAT".
