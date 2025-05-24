@@ -55,10 +55,6 @@ def get_params(params_path = 'params.yaml', envir = None):
         )
         params['turn_headers'] = json.loads(os.getenv('TURN_HEADERS', '{}'))
         params['slack_token'] = os.getenv('SLACK_TOKEN')
-
-    # Slack channel ID (same for dev/prod)
-    params['slack_channel_id'] = params['slack_channel_id']
-
     return params
 
 
