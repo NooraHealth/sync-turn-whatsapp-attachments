@@ -37,7 +37,7 @@ def main():
         bucket = storage_client.bucket(params['bucket_name'])
 
         # Download each attachment and upload to GCS
-        for _, row in df[1:4].iterrows():
+        for _, row in df.iterrows():
             uri = row['uri']
             media_type = row['media_type']
             mime_type = row['mime_type']
