@@ -6,6 +6,7 @@ import pandas as pd
 import oyaml as yaml
 import slack_sdk
 import mimetypes
+import requests
 from urllib.parse import urlparse
 from pathlib import Path
 from google.cloud import bigquery, bigquery_storage, storage
@@ -95,7 +96,27 @@ def run_read_bigquery(query, credentials, num_tries = 5, wait_secs = 5):
           else:
               raise e
 
-def get_slack_message_text(error: Exception) -> str:
+def transfer_file(row, bucket, turn_headers):
+    uri = row['uri']
+    media_type = row['media_type']
+    mime_type = row['mime_type']
+    phone = row['channel_phone']
+    headers = turn_headers[phone]
+
+    if headers is None:
+        return
+
+    response = requests.get(uri, headers=headers)
+    if response.status_code == 200:
+        filename = derive_filename(uri, mime_type)
+        destination = f"{media_type}/{filename}"
+        blob = bucket.blob(destination)
+        blob.upload_from_string(
+            response.content,
+            content_type=mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        )
+
+def get_slack_message_text(error: Exception):
     text = (
         f":warning: Sync failed with the following error:"
         f"\n\n`{str(error)}`"
