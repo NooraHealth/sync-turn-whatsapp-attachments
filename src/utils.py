@@ -105,18 +105,6 @@ def get_slack_message_text(error: Exception) -> str:
         text += f"\n\nSee the GitHub Actions <{run_url}|workflow log>."
     return text
 
-
-def get_slack_message_text(e, source_name):
-  text = (
-    f':warning: Sync for *{source_name}* failed with the following error:'
-    f'\n\n`{str(e)}`'
-  )
-  run_url = os.getenv('RUN_URL')
-  if run_url is not None:
-    text += f'\n\nPlease see the GitHub Actions <{run_url}|workflow run log>.'
-  return text
-
-
 def send_message_to_slack(text, channel_id, token):
   client = slack_sdk.WebClient(token = token)
   try:

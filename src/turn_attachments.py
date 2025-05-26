@@ -58,7 +58,7 @@ def main():
                     response.content,
                     content_type=mimetypes.guess_type(filename)[0] or "application/octet-stream"
                 )
-                print(f"Saved {filename}")
+                #print(f"Saved {filename}")
             else:
                 #print(f"Skipping {uri}: status {response.status_code}")
                 continue
