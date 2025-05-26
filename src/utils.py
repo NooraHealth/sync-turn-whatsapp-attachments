@@ -72,7 +72,7 @@ def derive_filename(uri, mime_type):
     path = urlparse(uri).path
     filename = os.path.basename(path)
     name, ext = os.path.splitext(filename)
-    if not ext and mime_type:
+    if ext == '' and mime_type is not None:
         guessed = mimetypes.guess_extension(mime_type)
         ext = guessed or ''
         filename = f"{name}{ext}"
