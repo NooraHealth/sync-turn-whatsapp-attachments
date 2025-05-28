@@ -28,7 +28,9 @@ def main():
         query = f"""
           SELECT *
           FROM `{project_analytics}.prod.res_message_attachments`
-          WHERE inserted_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {args.past_hours} HOUR)
+          WHERE
+            inserted_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {args.past_hours} HOUR)
+            AND direction = 'inbound'
             AND media_type NOT IN ('location', 'sticker')
           ORDER BY channel_phone
           """
