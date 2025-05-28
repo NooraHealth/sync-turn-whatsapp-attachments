@@ -1,8 +1,9 @@
 import requests
 import mimetypes
 import argparse
-import utils
 from pathlib import Path
+from . import utils
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Sync WhatsApp attachments to GCS and notify on errors.")
