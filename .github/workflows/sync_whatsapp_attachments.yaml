@@ -12,7 +12,7 @@ jobs:
       SOURCE_PARAMS: ${{ secrets.TURN_ATTACHMENTS }}
       SERVICE_ACCOUNT_KEY_RAW: ${{ secrets.SERVICE_ACCOUNT_KEY_RAW }}
       SERVICE_ACCOUNT_KEY_ANALYTICS: ${{ secrets.SERVICE_ACCOUNT_KEY_ANALYTICS }}
-      TURN_HEADERS: ${{ secrets.TURN_AUTH }}
+      TURN_HEADERS: ${{ secrets.TURN_HEADERS }}
       SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
