@@ -4,7 +4,15 @@ on:
   schedule:
     - cron: '0 0 * * *'
   workflow_dispatch:
-
+    inputs:
+      past_hours:
+        required: false
+        type: choice
+        options:
+          - 25
+          - 75
+          - 170
+          
 jobs:
   sync:
     runs-on: ubuntu-latest
@@ -15,6 +23,7 @@ jobs:
       TURN_HEADERS: ${{ secrets.TURN_HEADERS }}
       SLACK_TOKEN: ${{ secrets.SLACK_TOKEN }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      PAST_HOURS: ${{ inputs.past_hours || '25' }}
 
     steps:
       - name: Checkout code
@@ -30,5 +39,5 @@ jobs:
         run: uv sync --locked
 
       - name: Run script
-        run: uv run -m src.turn_attachments
+        run: uv run -m src.turn_attachments --past-hours $PAST_HOURS
         #run: uv run python src/turn_attachments.py
