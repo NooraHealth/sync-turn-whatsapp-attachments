@@ -1,4 +1,4 @@
-[![sync_whatsapp_attachments](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/sync_whatsapp_attachments.yaml/badge.svg)](https://github.com/NooraHealth/ap-ccp-cron/actions/workflows/sync_whatsapp_attachments.yaml)
+[![sync_whatsapp_attachments](https://github.com/NooraHealth/sync-turn-whatsapp-attachments/actions/workflows/sync_whatsapp_attachments.yaml/badge.svg)](https://github.com/NooraHealth/sync-turn-whatsapp-attachments/actions/workflows/sync_whatsapp_attachments.yaml)
 
 # Overview
 
