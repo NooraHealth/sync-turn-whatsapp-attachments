@@ -26,4 +26,3 @@ The sync runs daily and the code fetches data for the past 2 days.
    2. Copy and paste the contents of secrets/service_account_key_raw.json into a secret named "SERVICE_ACCOUNT_KEY_RAW".
    3. Copy and paste the contents of secrets/service_account_key_analytics.json into a secret named "SERVICE_ACCOUNT_KEY_ANALYTICS".
    4. Copy and paste the contents of secrets/turn_auth.json into a secret named "TURN_HEADERS".
-   5. Create a GH Token with read and write access for Actions and paste it into a secret named "GH_PAT".
