@@ -1,0 +1,23 @@
+name: Update timestamp file
+
+on:
+  schedule:
+    - cron: '30 0 1 * *'
+  workflow_dispatch:
+
+jobs:
+  the-job:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Update the super special file
+        run: |
+          printf "This file was updated on $(date).\nPut that " > dont_readme.txt
+          printf "in your pipe and smoke it, GitHub Actions.\n" >> dont_readme.txt
+      
+      - uses: EndBug/add-and-commit@v11
+        with:
+          default_author: github_actions
