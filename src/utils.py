@@ -5,6 +5,7 @@ import time
 import pandas as pd
 import oyaml as yaml
 import slack_sdk
+from slack_sdk.errors import SlackApiError
 import mimetypes
 import requests
 from urllib.parse import urlparse
@@ -117,18 +118,22 @@ def transfer_file(row, bucket, turn_headers):
         )
 
 def get_slack_message_text(error: Exception):
+    repo = os.getenv("GITHUB_REPOSITORY", "unknown repo")
+    workflow = os.getenv("GITHUB_WORKFLOW", "unknown workflow")
     text = (
-        f":warning: Sync failed with the following error:"
-        f"\n\n`{str(error)}`"
+        f":warning: Sync failed in *{repo}* "
+        f"(workflow: *{workflow}*)."
+        f"\n\nError type: `{type(error).__name__}`"
+        f"\nError: `{error}`"
     )
     run_url = os.getenv('RUN_URL')
     if run_url:
-        text += f"\n\nSee the GitHub Actions <{run_url}|workflow log>."
+        text += f"\n\nPlease see the GitHub Actions <{run_url}|workflow run log>."
     return text
 
 def send_message_to_slack(text, channel_id, token):
   client = slack_sdk.WebClient(token = token)
   try:
     client.chat_postMessage(channel = channel_id, text = text)
-  except slack_sdk.SlackApiError as e:
+  except SlackApiError as e:
     assert e.response['error']
