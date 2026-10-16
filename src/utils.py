@@ -118,8 +118,8 @@ def transfer_file(row, bucket, turn_headers):
         )
 
 def get_slack_message_text(error: Exception):
-    repo = os.getenv("GITHUB_REPOSITORY", "unknown repo")
-    workflow = os.getenv("GITHUB_WORKFLOW", "unknown workflow")
+    repo = os.getenv('GITHUB_REPOSITORY', 'unknown repo')
+    workflow = os.getenv('GITHUB_WORKFLOW', 'unknown workflow')
     text = (
         f":warning: Sync failed in *{repo}* "
         f"(workflow: *{workflow}*)."
